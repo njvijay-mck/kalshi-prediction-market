@@ -1,0 +1,182 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+32 self-contained Python demo scripts covering the full Kalshi prediction market REST and WebSocket API. Each script is standalone and prints human-readable output.
+
+## Toolchain
+
+- **Package manager:** `uv` — run `uv sync` to install, `uv run python <script>` to execute
+- **Linter/formatter:** `ruff`
+- **Type checker:** `mypy`
+
+## Common Commands
+
+```bash
+uv sync                                               # Install/update dependencies
+uv run python 01_exchange_info/01_exchange_status.py  # Run any script
+uv run ruff check .                                   # Lint
+uv run ruff format .                                  # Format
+uv run mypy .                                         # Type check
+```
+
+## Auth Module (`auth/client.py`)
+
+Every script imports from here. Key exports:
+
+```python
+from auth.client import get_client       # KalshiClient (sync REST, kalshi_python_sync)
+from auth.client import raw_get          # Authenticated GET → dict (bypasses SDK pydantic)
+from auth.client import raw_post         # Authenticated POST → dict
+from auth.client import raw_delete       # Authenticated DELETE → dict
+from auth.client import get_ws_url       # WebSocket base URL
+from auth.client import build_ws_headers # RSA-PSS signed headers for WS handshake
+```
+
+`get_client()` and `raw_get()` both work **without credentials** for public endpoints (they skip auth headers when env vars are absent).
+
+## Environment
+
+`.env` file (copy from `.env.example`):
+
+```bash
+KALSHI_API_KEY_ID=your-key-id
+KALSHI_PRIVATE_KEY_PATH=kalshi.pem   # relative or absolute path to PEM file
+# "demo" or "prod"
+KALSHI_ENV=demo
+# optional ticker override
+KALSHI_EXAMPLE_TICKER=
+```
+
+> **Critical:** Never put inline comments after `=` values — python-dotenv includes them in the value. Put comments on separate lines.
+
+`KALSHI_ENV=demo` → `demo-api.kalshi.co`
+`KALSHI_ENV=prod` → `api.elections.kalshi.com`
+API keys are environment-specific — a prod key returns `NOT_FOUND` (401) on demo and vice versa.
+
+## SDK Quirks (kalshi_python_sync v3.2.0)
+
+### SDK client pattern
+
+`KalshiClient` uses `__getattr__` to delegate flat method calls to internal sub-APIs:
+
+```python
+client = get_client()
+client.get_balance()        # → PortfolioApi.get_balance()
+client.create_order(...)    # → OrdersApi.create_order(...)
+```
+
+### When to use `raw_get()` vs SDK
+
+Many endpoints fail with `pydantic.ValidationError` because the API returns `null` for fields the SDK models require. Use `raw_get()` for these:
+
+| Endpoint category | Use `raw_get`? | Reason |
+|------------------|----------------|--------|
+| `GET /series`, `/events`, `/markets` | **Yes** | Null `category`, `tags`, `risk_limit_cents` |
+| `GET /markets/{ticker}/orderbook` | **Yes** | SDK model field issues |
+| `GET /portfolio/orders/queue_positions` | **Yes** | Returns null list |
+| `GET /portfolio/orders/{id}/queue_position` | **Yes** | SDK pydantic failure |
+| `GET /historical/*` | **Yes** | SDK methods don't exist yet |
+| `GET /account/limits` | **Yes** | SDK method not available |
+| `get_balance()`, `get_positions()`, `get_fills()`, `get_settlements()` | **No** | SDK works |
+| `create_order()`, `cancel_order()`, `amend_order()`, etc. | **No** | SDK works |
+| `batch_create_orders()`, `batch_cancel_orders()` | **No** | SDK works |
+| `create_order_group()`, `get_order_groups()`, etc. | **No** | SDK works |
+| `get_market_candlesticks()` | **No** | SDK works |
+| `get_trades()` | **No** | SDK works |
+
+### Correct SDK method and field names
+
+```python
+# Orders — use int, not fp variants
+client.create_order(
+    ticker=ticker, side="yes", action="buy", type="limit",
+    count=1,          # int contracts (NOT count_fp)
+    yes_price=1,      # int cents 1-99 (NOT yes_price_dollars=0.01)
+    client_order_id=str(uuid.uuid4()),
+)
+
+# Amend — BOTH client_order_id (original) AND updated_client_order_id (new) are required
+client.amend_order(
+    order_id=oid, ticker=ticker, side="yes", action="buy", count=1, yes_price=2,
+    client_order_id=original_uuid,           # required
+    updated_client_order_id=new_uuid,        # required
+)
+
+# Decrease
+client.decrease_order(order_id=oid, reduce_by=3)   # int (NOT reduce_by_fp)
+
+# Batch cancel
+client.batch_cancel_orders(ids=[oid1, oid2])       # field is 'ids' (NOT order_ids)
+
+# Order groups — kwarg is order_group_id= (NOT group_id=)
+client.get_order_group(order_group_id=gid)
+client.reset_order_group(order_group_id=gid)
+client.delete_order_group(order_group_id=gid)
+
+# Candlesticks — BOTH series_ticker AND ticker required
+series_ticker = event_ticker.rsplit("-", 2)[0]
+client.get_market_candlesticks(
+    series_ticker=series_ticker, ticker=ticker,
+    start_ts=start_ts, end_ts=end_ts, period_interval=60,
+)
+```
+
+### SDK response field types (confirmed on prod)
+
+- `Order.status` → `OrderStatus` enum (e.g. `OrderStatus.RESTING`), not a plain string
+- `MarketPosition.market_exposure_dollars` → `str` like `'9.2300'` — use `float()` before formatting
+- `Fill.created_time` → `datetime.datetime` object (not string or int)
+- `Settlement.settled_time` → `datetime.datetime` object
+- `MarketCandlestick.price` → `PriceDistribution` with `.open`, `.high`, `.low`, `.close`, `.mean` (int cents) and `.*_dollars` (str)
+
+## Historical API Field Names
+
+The historical endpoints use different field names than the portfolio endpoints:
+
+| Data | Field name |
+|------|-----------|
+| Cutoff timestamp | `market_settled_ts` (ISO string), also `orders_updated_ts`, `trades_created_ts` |
+| Market settle date | `settlement_ts` (ISO string) — NOT `settled_time` |
+| Market outcome | `result` (`"yes"` or `"no"`) — NOT `market_result` |
+| Candle prices | Dollar strings (e.g. `"0.5500"` = 55¢) when non-null; `null` for zero-volume |
+
+## WebSocket Architecture (`10_websocket/`)
+
+All 6 scripts share the same skeleton:
+- Connect with `build_ws_headers()` — **re-sign on every reconnect** (stale timestamps rejected by server)
+- `ping_interval=None` — Kalshi sends pings every ~10s, `websockets` auto-pongs
+- Exponential backoff reconnect: 1→2→4→…→60s cap
+- Clean Ctrl+C via `asyncio.Event` + `loop.add_signal_handler` (Linux/WSL2)
+
+Channels that do **not** take `market_tickers` in the subscribe params:
+- `user_orders`, `fill`, `market_lifecycle_v2`
+
+Channels that **do** take `market_tickers`:
+- `ticker`, `orderbook_delta`, `trade`
+
+Use `raw_get("/markets", status="open", limit=N)` to get tickers — never `client.get_markets()` (pydantic fails).
+
+## Folder/Script Map
+
+```
+auth/client.py              # shared auth — every script imports this
+docs/kalshi_api_reference.md # local API reference
+
+01_exchange_info/           # SDK works for all 3 (public)
+02_market_discovery/        # all use raw_get (pydantic fails on demo/prod null fields)
+03_market_data/             # raw_get for market lookup; SDK for candlesticks/trades
+04_portfolio/               # SDK works (read-only, auth)
+05_orders/                  # SDK works; queue_position uses raw_get
+06_batch_operations/        # SDK works
+07_order_groups/            # SDK works; param is order_group_id= not group_id=
+08_historical/              # all use raw_get (SDK methods don't exist)
+09_account_management/      # get_api_keys: SDK; account_limits: raw_get
+10_websocket/               # raw websockets lib + build_ws_headers(); raw_get for tickers
+```
+
+## API Reference
+
+`docs/kalshi_api_reference.md` — local copy covering auth, endpoints, market structure, WebSocket channels, order fields, pagination, and rate limits.
