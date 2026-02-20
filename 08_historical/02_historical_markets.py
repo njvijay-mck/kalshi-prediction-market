@@ -34,22 +34,28 @@ except AttributeError:
 if not markets:
     print("No historical markets returned.")
 else:
-    print(f"{'Ticker':<35} {'Status':>10} {'Settlement':>12} {'Settled Time':^22}")
-    print("-" * 82)
+    print(f"{'Ticker':<35} {'Status':>10} {'Settlement':>12} {'Result':>5} {'Date':^12}")
+    print("-" * 78)
     for m in markets:
         if isinstance(m, dict):
             ticker = m.get("ticker", "?")
             status = m.get("status", "?")
             sv = m.get("settlement_value", "?")
-            st = m.get("settled_time", m.get("settlement_time", "?"))
+            # Historical markets use settlement_ts (ISO string), not settled_time
+            st = m.get("settlement_ts", m.get("settled_time", m.get("settlement_time", "?")))
+            result = m.get("result", "")
         else:
             ticker = getattr(m, "ticker", "?")
             status = getattr(m, "status", "?")
             sv = getattr(m, "settlement_value", "?")
-            st = getattr(m, "settled_time", getattr(m, "settlement_time", "?"))
+            st = getattr(m, "settlement_ts", getattr(m, "settled_time", "?"))
+            result = getattr(m, "result", "")
 
         sv_str = f"{sv}¢" if sv not in ("?", None) else "?"
-        print(f"{str(ticker):<35} {str(status):>10} {sv_str:>12} {str(st):^22}")
+        # Format ISO timestamp to short form
+        if isinstance(st, str) and "T" in st:
+            st = st[:10]  # just the date part
+        print(f"{str(ticker):<35} {str(status):>10} {sv_str:>12} {str(result):>5} {str(st):^12}")
 
 if cursor:
     print(f"\nMore historical markets available (cursor: {cursor!r})")

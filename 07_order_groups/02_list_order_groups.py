@@ -39,7 +39,7 @@ else:
 
         # Fetch per-group detail
         try:
-            detail_resp = client.get_order_group(group_id=g.id)
+            detail_resp = client.get_order_group(order_group_id=g.id)
             orders = detail_resp.orders or []
             print(f"  Orders   : {len(orders)} linked")
             for o in orders[:5]:

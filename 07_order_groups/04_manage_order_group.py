@@ -37,7 +37,7 @@ time.sleep(0.5)
 # Step 2: Fetch group detail
 print("Step 2: Get group detail ...")
 try:
-    detail_resp = client.get_order_group(group_id=group_id)
+    detail_resp = client.get_order_group(order_group_id=group_id)
     print(f"  is_auto_cancel_enabled: {detail_resp.is_auto_cancel_enabled}")
     print(f"  linked orders         : {len(detail_resp.orders or [])}\n")
 except Exception as exc:
@@ -48,7 +48,7 @@ time.sleep(0.5)
 # Step 3: Reset the group
 print("Step 3: Reset group ...")
 try:
-    client.reset_order_group(group_id=group_id)
+    client.reset_order_group(order_group_id=group_id)
     print("  Reset successful.\n")
 except Exception as exc:
     print(f"  Reset: {exc}\n")
@@ -58,7 +58,7 @@ time.sleep(0.5)
 # Step 4: Delete the group
 print(f"Step 4: Delete group {group_id} ...")
 try:
-    client.delete_order_group(group_id=group_id)
+    client.delete_order_group(order_group_id=group_id)
     print("  Deleted successfully.\n")
 except Exception as exc:
     print(f"  Delete: {exc}\n")
@@ -66,7 +66,7 @@ except Exception as exc:
 # Verify deletion
 print("Step 5: Verify deletion (should return error) ...")
 try:
-    client.get_order_group(group_id=group_id)
+    client.get_order_group(order_group_id=group_id)
     print("  Still exists (unexpected).")
 except Exception as exc:
     print(f"  Confirmed deleted: {type(exc).__name__}\n")

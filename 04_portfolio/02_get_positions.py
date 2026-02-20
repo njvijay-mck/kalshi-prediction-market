@@ -37,8 +37,8 @@ else:
         # position > 0 = net yes, < 0 = net no
         qty = abs(pos.position)
         side = "yes" if pos.position > 0 else "no"
-        exposure_str = f"${pos.market_exposure_dollars:.4f}" if pos.market_exposure_dollars else "?"
-        pnl_str = f"${pos.realized_pnl_dollars:.4f}" if pos.realized_pnl_dollars else "?"
+        exposure_str = f"${float(pos.market_exposure_dollars):.4f}" if pos.market_exposure_dollars else "?"
+        pnl_str = f"${float(pos.realized_pnl_dollars):.4f}" if pos.realized_pnl_dollars else "?"
         print(f"{pos.ticker:<35} {side:>5} {qty:>6} {exposure_str:>12} {pnl_str:>14}")
 
 if resp.cursor:

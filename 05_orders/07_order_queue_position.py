@@ -19,6 +19,8 @@ Run:
 import os
 import uuid
 
+import urllib.parse
+
 from auth.client import get_client, raw_get
 
 client = get_client()
@@ -48,27 +50,27 @@ create_resp = client.create_order(
 order_id = create_resp.order.order_id
 print(f"  Created: {order_id}\n")
 
-# Single order queue position
+# Single order queue position (use raw_get — SDK pydantic fails on this response)
 print(f"Single order queue position for {order_id}:")
 try:
-    pos_resp = client.get_order_queue_position(order_id=order_id)
-    print(f"  queue_position: {pos_resp.queue_position}")
+    data = raw_get(f"/portfolio/orders/{order_id}/queue_position")
+    print(f"  queue_position: {data.get('queue_position', '?')}")
     print("  (Position 1 = next to fill at this price level)")
 except Exception as exc:
     print(f"  Error: {exc}")
 
-# Bulk: all resting orders in a market
+# Bulk: all resting orders in a market (use raw_get — SDK pydantic fails when result is null)
 print(f"\nAll resting order positions in {ticker}:")
 try:
-    bulk_resp = client.get_order_queue_positions(market_tickers=[ticker])
-    positions = getattr(bulk_resp, "queue_positions", getattr(bulk_resp, "order_queue_positions", [])) or []
+    data = raw_get("/portfolio/orders/queue_positions", market_tickers=ticker)
+    positions = data.get("queue_positions") or []
     if positions:
         print(f"  {'Order ID':<40} {'Queue Position':>15}")
         print("  " + "-" * 57)
         for p in positions:
-            print(f"  {p.order_id:<40} {str(p.queue_position):>15}")
+            print(f"  {p.get('order_id', '?'):<40} {str(p.get('queue_position', '?')):>15}")
     else:
-        print("  No resting order positions returned.")
+        print("  No resting order positions returned (or queue_positions is null for this market).")
 except Exception as exc:
     print(f"  Error: {exc}")
 

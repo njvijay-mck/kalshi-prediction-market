@@ -28,14 +28,24 @@ try:
     print("(Used SDK method)")
 except AttributeError:
     data = raw_get("/historical/cutoff")
-    cutoff_ts = data.get("cutoff_time", data.get("cutoff_timestamp"))
+    # API returns: market_settled_ts, orders_updated_ts, trades_created_ts (ISO strings)
+    cutoff_ts = data.get("market_settled_ts", data.get("cutoff_time", data.get("cutoff_timestamp")))
     print("(Used raw HTTP — SDK method not available)")
+    if data and not cutoff_ts:
+        print("  Full response:", data)
 
 if cutoff_ts is not None:
-    print(f"\n  raw cutoff timestamp : {cutoff_ts}")
-    if isinstance(cutoff_ts, (int, float)):
+    print(f"\n  market_settled_ts    : {cutoff_ts}")
+    if isinstance(cutoff_ts, str):
+        dt = datetime.datetime.fromisoformat(cutoff_ts.replace("Z", "+00:00"))
+        print(f"  cutoff datetime (UTC): {dt.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    elif isinstance(cutoff_ts, (int, float)):
         dt = datetime.datetime.fromtimestamp(cutoff_ts, tz=datetime.timezone.utc)
         print(f"  cutoff datetime (UTC): {dt.isoformat()}")
+    # Also print other cutoff timestamps if available
+    for key in ("orders_updated_ts", "trades_created_ts"):
+        if key in data:
+            print(f"  {key:25s}: {data[key]}")
     print("\nData before this cutoff must be fetched from /historical/* endpoints.")
     print("Data after this cutoff is available in the standard /markets, /trades, etc.")
 else:

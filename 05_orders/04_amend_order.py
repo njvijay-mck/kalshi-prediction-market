@@ -35,6 +35,7 @@ if not ticker:
 print("=== Amend Order (atomic cancel + rebook) ===\n")
 
 # Step 1: Create original order at 1¢
+original_client_order_id = str(uuid.uuid4())
 print(f"Step 1: Creating limit buy at 1¢ on {ticker} ...")
 create_resp = client.create_order(
     ticker=ticker,
@@ -43,12 +44,13 @@ create_resp = client.create_order(
     type="limit",
     count=1,
     yes_price=1,
-    client_order_id=str(uuid.uuid4()),
+    client_order_id=original_client_order_id,
 )
 original = create_resp.order
 print(f"  Created: order_id={original.order_id}  yes_price={original.yes_price}¢\n")
 
 # Step 2: Amend to 2¢
+# AmendOrderRequest requires BOTH client_order_id (original) and updated_client_order_id (new)
 new_client_order_id = str(uuid.uuid4())
 print("Step 2: Amending price to 2¢ ...")
 amend_resp = client.amend_order(
@@ -58,7 +60,8 @@ amend_resp = client.amend_order(
     action="buy",
     count=1,
     yes_price=2,
-    updated_client_order_id=new_client_order_id,
+    client_order_id=original_client_order_id,       # required: original UUID
+    updated_client_order_id=new_client_order_id,    # required: new UUID
 )
 amended = amend_resp.order
 print(f"  Amended: order_id={amended.order_id}  yes_price={amended.yes_price}¢\n")
