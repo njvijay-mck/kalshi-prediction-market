@@ -43,20 +43,26 @@ DEFAULT_LIMIT = 10
 DEFAULT_MIN_VOLUME = 0
 DEFAULT_MIN_OI = 0
 
-# --- LLM providers (OpenAI-compatible) ---
+# --- LLM providers ---
+# - claude: Anthropic Claude API (Anthropic SDK)
+# - kimi: Kimi Code API (Anthropic SDK with custom base URL)
+# - moonshot: Standard Moonshot AI API (OpenAI-compatible SDK)
 PROVIDER_BASE_URLS: dict[str, str] = {
-    "claude": "https://api.anthropic.com/v1",
-    "kimi": "https://api.moonshot.cn/v1",
+    "claude": "https://api.anthropic.com",  # Anthropic SDK adds /v1
+    "kimi": "https://api.kimi.com/coding",  # Anthropic SDK adds /v1, Kimi uses Anthropic format
+    "moonshot": "https://api.moonshot.cn/v1",  # OpenAI-compatible
 }
 
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "claude": "claude-opus-4-6",
-    "kimi": "moonshot-v1-8k",
+    "kimi": "kimi-for-coding",
+    "moonshot": "kimi-k2-5",
 }
 
 PROVIDER_ENV_KEYS: dict[str, str] = {
     "claude": "ANTHROPIC_API_KEY",
     "kimi": "KIMI_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
 }
 
 

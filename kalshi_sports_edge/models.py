@@ -9,6 +9,12 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass, field
 
+# NBA tip-off is typically 3 hours before the market's expected_expiration_time.
+# This offset is used as a fallback for all sports series since Kalshi does not
+# expose a game start time field.
+_GAME_START_OFFSET = datetime.timedelta(hours=3)
+_UTC = datetime.timezone.utc
+
 
 @dataclass
 class MarketData:
@@ -28,8 +34,8 @@ class MarketData:
     close_time: str | None  # ISO8601 string — settlement deadline, NOT game date
     game_date: datetime.date | None = None          # game date, parsed from event_ticker
     expected_expiration_time: str | None = None  # ISO8601, proxy for game end time
-    yes_team: str | None = None                     # team name for YES outcome (e.g. "Minnesota")
-    no_team: str | None = None                      # team name for NO outcome (e.g. "Philadelphia")
+    yes_team: str | None = None                     # team name for YES outcome
+    no_team: str | None = None                      # team name for NO outcome
 
     @property
     def mid_price(self) -> int | None:
@@ -44,6 +50,35 @@ class MarketData:
         if self.yes_bid is not None and self.yes_ask is not None:
             return self.yes_ask - self.yes_bid
         return None
+
+    @property
+    def no_price(self) -> int | None:
+        """NO price = 100 - YES price (using mid). None if no price data."""
+        mid = self.mid_price
+        return 100 - mid if mid is not None else None
+
+    def game_start_time(self) -> datetime.datetime | None:
+        """Estimate game start time from expected_expiration_time.
+
+        Returns UTC datetime by subtracting _GAME_START_OFFSET from
+        expected_expiration_time. Returns None if no expiration time.
+        """
+        if not self.expected_expiration_time:
+            return None
+        try:
+            dt = datetime.datetime.fromisoformat(
+                self.expected_expiration_time.replace("Z", "+00:00")
+            )
+            return dt - _GAME_START_OFFSET
+        except (ValueError, AttributeError):
+            return None
+
+    def has_started(self) -> bool:
+        """Return True if the game has already started (based on current UTC time)."""
+        start_time = self.game_start_time()
+        if start_time is None:
+            return False
+        return datetime.datetime.now(_UTC) >= start_time
 
 
 @dataclass
@@ -64,8 +99,6 @@ class OddsTable:
     """Complete odds analysis for one Kalshi binary market.
 
     Binary constraint: no_price = 100 - yes_price always.
-    Overround using mid-price is ~0 for efficient markets.
-    Overround using bid/ask reflects the spread as market-maker vig.
     """
 
     market: MarketData
@@ -73,7 +106,70 @@ class OddsTable:
     no_row: OddsRow
     overround: float    # (yes_implied + no_implied) - 1.0
     price_source: str   # "mid" | "last" | "ask" | "bid"
-    wide_spread: bool   # True when bid/ask spread exceeds WIDE_SPREAD_THRESHOLD
+    wide_spread: bool   # True when bid/ask spread exceeds threshold
+
+
+@dataclass
+class GameGroup:
+    """A group of markets for the same game (both sides of a binary market).
+
+    For a game like Spurs vs Pistons:
+    - event_ticker: KXNBAGAME-26FEB23SASDET
+    - team_a_market: MarketData for SAS YES (ticker: ...-SAS)
+    - team_b_market: MarketData for DET YES (ticker: ...-DET)
+    """
+
+    event_ticker: str
+    game_date: datetime.date | None
+    expected_expiration_time: str | None
+    team_a_name: str
+    team_a_abbrev: str
+    team_a_market: MarketData
+    team_b_name: str
+    team_b_abbrev: str
+    team_b_market: MarketData
+
+    @property
+    def combined_volume(self) -> int:
+        """Total volume across both sides."""
+        return self.team_a_market.volume + self.team_b_market.volume
+
+    @property
+    def combined_oi(self) -> int:
+        """Total open interest across both sides."""
+        return self.team_a_market.open_interest + self.team_b_market.open_interest
+
+    @property
+    def matchup_str(self) -> str:
+        """Formatted matchup like 'San Antonio vs Detroit'."""
+        return f"{self.team_a_name} vs {self.team_b_name}"
+
+    def game_start_time(self) -> datetime.datetime | None:
+        """Game start time from either market."""
+        return self.team_a_market.game_start_time()
+
+    def has_started(self) -> bool:
+        """True if game has started (based on team_a market)."""
+        return self.team_a_market.has_started()
+
+    def get_price_display(self, side: str) -> str:
+        """Get YES-NO price display for a side.
+
+        side: 'a' for team_a, 'b' for team_b
+        Returns: '45-55' meaning YES 45¢ / NO 55¢
+        """
+        if side == 'a':
+            market = self.team_a_market
+        elif side == 'b':
+            market = self.team_b_market
+        else:
+            return "—"
+
+        yes = market.mid_price
+        if yes is None:
+            return "—"
+        no = 100 - yes
+        return f"{yes}-{no}"
 
 
 @dataclass
@@ -84,6 +180,7 @@ class RunMetrics:
     finished_at: datetime.datetime | None = None
     markets_fetched: int = 0
     markets_after_filter: int = 0
+    games_analyzed: int = 0  # Number of unique games (after grouping sides)
     llm_calls_made: int = 0
     web_searches_made: int = 0
     errors: list[str] = field(default_factory=list)
