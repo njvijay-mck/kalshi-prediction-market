@@ -55,7 +55,7 @@ def run(args: CLIArgs) -> int:
             terminal.console.print(
                 f"[yellow]No sports markets found with game date {args.date}.[/yellow]"
             )
-            hints = market_fetcher.get_available_game_dates()
+            hints = market_fetcher.get_available_game_dates(sports=args.sports)
             if hints:
                 terminal.console.print(
                     f"[dim]Available game dates: {', '.join(hints)}[/dim]"
@@ -258,7 +258,8 @@ def _resolve_markets(args: CLIArgs, metrics: RunMetrics) -> list[MarketData]:
 
     if args.search:
         return market_fetcher.fetch_by_keyword(
-            args.search, args.limit, args.min_volume, args.min_open_interest
+            args.search, args.limit, args.min_volume, args.min_open_interest,
+            sports=args.sports,
         )
 
     if args.date:
@@ -267,9 +268,10 @@ def _resolve_markets(args: CLIArgs, metrics: RunMetrics) -> list[MarketData]:
             "not market settlement date. This may take a moment.[/dim]"
         )
         return market_fetcher.fetch_by_date(
-            args.date, args.limit, args.min_volume, args.min_open_interest
+            args.date, args.limit, args.min_volume, args.min_open_interest,
+            sports=args.sports,
         )
 
     # --pick N or default (pick was set to limit in _validate_args)
     n = args.pick or args.limit
-    return market_fetcher.fetch_top_n(n, args.min_volume, args.min_open_interest)
+    return market_fetcher.fetch_top_n(n, args.min_volume, args.min_open_interest, sports=args.sports)
