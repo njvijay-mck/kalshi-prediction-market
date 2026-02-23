@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 32 self-contained Python demo scripts covering the full Kalshi prediction market REST and WebSocket API. Each script is standalone and prints human-readable output.
 
+**Plus:** `kalshi_sports_edge/` — A comprehensive sports prediction market analysis tool with LLM-powered deep research, multi-source web search, and professional reporting.
+
 ## Toolchain
 
 - **Package manager:** `uv` — run `uv sync` to install, `uv run python <script>` to execute
@@ -17,10 +19,153 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync                                               # Install/update dependencies
 uv run python 01_exchange_info/01_exchange_status.py  # Run any script
+uv run python -m kalshi_sports_edge --help           # Sports edge CLI help
 uv run ruff check .                                   # Lint
 uv run ruff format .                                  # Format
 uv run mypy .                                         # Type check
 ```
+
+---
+
+# Kalshi Sports Edge Module
+
+## Overview
+
+`kalshi_sports_edge/` is a professional-grade sports prediction market analysis system that:
+- Fetches live sports markets from Kalshi API
+- Performs multi-source web research (Reddit, Yahoo, ESPN, X)
+- Uses LLM to estimate true probabilities
+- Calculates Edge, EV, and ROI
+- Generates consolidated reports (terminal + PDF)
+
+## Architecture
+
+```
+kalshi_sports_edge/
+├── cli.py              # CLI argument parsing (--sports, --deep-research, etc.)
+├── config.py           # Sports categories, series tickers, API settings
+├── models.py           # Dataclasses: MarketData, OddsTable, MarketAnalysis, etc.
+├── orchestrator.py     # Main coordinator, routes CLI args to pipelines
+├── output/
+│   ├── terminal.py     # Rich terminal output (8-section reports)
+│   └── pdf_report.py   # PDF generation with professional styling
+└── services/
+    ├── deep_research.py    # 5-stage pipeline with web search
+    ├── llm_pipeline.py     # Single-pass LLM analysis
+    ├── market_fetcher.py   # Kalshi API market fetching
+    ├── market_utils.py     # Market grouping utilities
+    ├── odds_engine.py      # Odds calculations
+    └── web_search.py       # Multi-source Brave search
+```
+
+## Sports Categories
+
+Supported sports with series tickers:
+
+| Sport | Series Count | Examples |
+|-------|--------------|----------|
+| **Basketball** | 19 | NBA, WNBA, NCAA, Euroleague, VTB, ACB |
+| **Football** | 3 | NFL, NCAAF, D3 |
+| **Baseball** | 2 | MLB, NCAA |
+| **Soccer** | 39 | MLS, EPL, La Liga, Bundesliga, Champions League |
+| **Tennis** | 38 | ATP, WTA, Grand Slams, Challengers |
+| **Hockey** | 5 | NHL, NCAA, KHL, IIHF, AHL |
+
+## CLI Usage
+
+```bash
+# Basic usage
+uv run python -m kalshi_sports_edge --pick 10 --summary
+
+# Filter by sport
+uv run python -m kalshi_sports_edge --pick 10 --sports soccer
+uv run python -m kalshi_sports_edge --pick 20 --sports basketball soccer tennis
+
+# Deep research with web search
+uv run python -m kalshi_sports_edge --pick 10 --deep-research --web-search
+
+# Specific date with sport filter
+uv run python -m kalshi_sports_edge --date 2026-03-01 --sports basketball --deep-research
+
+# Output formats
+uv run python -m kalshi_sports_edge --pick 5 --deep-research --pdf        # PDF report
+uv run python -m kalshi_sports_edge --pick 5 --deep-research --verbose    # Show web context
+```
+
+## Deep Research Pipeline (5 Stages)
+
+1. **Multi-Source Web Research** — Parallel searches across:
+   - Reddit (r/nba, r/sportsbook, etc.)
+   - Yahoo Sports
+   - ESPN
+   - X/Twitter
+   - General web
+
+2. **Probability Estimation** — LLM estimates true probabilities using web context
+
+3. **Metrics Calculation**:
+   - `Edge = LLM% - Market%`
+   - `EV/c = Edge` (when positive)
+   - `ROI = EV / MarketPrice × 100`
+
+4. **Classification**:
+   - Sentiment: Bullish / Neutral / Bearish
+   - Confidence: High / Medium / Low
+   - Reason: stats, injury, form, news, data, record, consensus, volume, schedule, weather, momentum, unclear
+
+5. **Consolidation** — Generate rankings and recommendations
+
+## Report Sections (8 Sections)
+
+1. **Header** — Timestamp, market count, model info
+2. **Summary Table** — All markets with Edge, EV, Sentiment, ROI, Rec, Conf, Why
+3. **Top Picks by Edge** — |Edge| ≥ 5%, ranked by magnitude
+4. **Top Picks by EV** — Positive EV only, ranked
+5. **Markets to Avoid** — No edge or negative EV
+6. **Mini Odds Overview** — Per-market detailed breakdown
+7. **Why Column Legend** — Explanation of reason tags
+8. **Footer** — Disclaimer
+
+## Key Data Models
+
+### MarketData
+- `ticker`, `title`, `event_ticker`, `category`
+- `yes_bid`, `yes_ask`, `last_price`, `volume`, `open_interest`
+- `game_date`, `yes_team`, `no_team`
+- `mid_price`, `spread_cents`
+
+### OddsTable
+- `yes_row`, `no_row` (OddsRow with price, implied_prob, decimal_odds, american_odds)
+- `overround`, `price_source`, `wide_spread`
+
+### MarketAnalysis (Deep Research)
+- `market`, `odds_table`
+- `llm_yes_prob`, `llm_no_prob`
+- `yes_edge`, `no_edge`, `yes_ev`, `no_ev`, `yes_roi`, `no_roi`
+- `best_edge`, `best_ev`, `best_side`, `best_roi`
+- `sentiment`, `confidence`, `reason`
+- `web_context`, `llm_analysis`
+
+## Environment Variables
+
+```bash
+# Required for authenticated endpoints
+KALSHI_API_KEY_ID=your-key-id
+KALSHI_PRIVATE_KEY_PATH=kalshi.pem
+KALSHI_ENV=demo  # or "prod"
+
+# Required for web search
+BRAVE_SEARCH_API_KEY=your-brave-key
+
+# Required for LLM analysis
+ANTHROPIC_API_KEY=your-claude-key    # for --provider claude
+KIMI_API_KEY=your-kimi-key           # for --provider kimi
+MOONSHOT_API_KEY=your-moonshot-key   # for --provider moonshot
+```
+
+---
+
+# API Demo Scripts
 
 ## Auth Module (`auth/client.py`)
 
@@ -175,6 +320,8 @@ docs/kalshi_api_reference.md # local API reference
 08_historical/              # all use raw_get (SDK methods don't exist)
 09_account_management/      # get_api_keys: SDK; account_limits: raw_get
 10_websocket/               # raw websockets lib + build_ws_headers(); raw_get for tickers
+
+kalshi_sports_edge/         # Sports prediction market analysis tool
 ```
 
 ## API Reference
