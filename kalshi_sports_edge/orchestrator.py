@@ -241,7 +241,16 @@ def _run_deep_research(
             terminal.print_consolidated_report(report, verbose=args.verbose)
 
         if args.pdf:
-            path = pdf_report.write_consolidated_report(report)
+            # Use enhanced PDF format if analyses available
+            analyses = getattr(report, '_analyses', [])
+            if analyses:
+                path = pdf_report.write_enhanced_consolidated_report(
+                    analyses=analyses,
+                    generated_at=report.generated_at,
+                    model=args.model,
+                )
+            else:
+                path = pdf_report.write_consolidated_report(report)
             terminal.console.print(f"\n[green]PDF saved → {path}[/green]")
 
         return 0
