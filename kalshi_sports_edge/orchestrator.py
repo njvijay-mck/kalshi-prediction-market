@@ -196,22 +196,49 @@ def _run_deep_research(
     web_ctx: str | None,
     metrics: RunMetrics,
 ) -> int:
+    """Run enhanced deep research with multi-source web search and comprehensive metrics."""
     terminal.console.print(
-        f"\n[bold cyan]Running Deep Research Pipeline "
+        f"\n[bold cyan]Running Enhanced Deep Research Pipeline "
         f"({len(markets)} market{'s' if len(markets) != 1 else ''})...[/bold cyan]"
     )
+    terminal.console.print(
+        "[dim]Stages: [1] Multi-source web search → [2] Probability estimation → "
+        "[3] Edge/EV/ROI calculation → [4] Classification → [5] Consolidation[/dim]"
+    )
+    
     try:
+        # Run enhanced deep research with progress updates
+        def progress(msg: str) -> None:
+            terminal.console.print(f"[dim]{msg}[/dim]")
+        
         report = deep_research.run_deep_research(
             markets=markets,
             odds_tables=odds_tables,
             client=client,
             model=args.model,
             web_context=web_ctx,
+            progress=progress,
         )
         report.metrics = metrics
-        metrics.llm_calls_made = 4
-
-        terminal.print_consolidated_report(report, verbose=args.verbose)
+        
+        # Estimate LLM calls: 1 per market for probability estimation
+        metrics.llm_calls_made = len(markets)
+        metrics.web_searches_made = len(set(m.event_ticker for m in markets)) * 5  # 5 sources per game
+        
+        # Get analyses for enhanced output
+        analyses = getattr(report, '_analyses', [])
+        
+        # Use enhanced output format
+        if analyses:
+            terminal.print_enhanced_consolidated_report(
+                analyses=analyses,
+                generated_at=report.generated_at,
+                model=args.model,
+                verbose=args.verbose,
+            )
+        else:
+            # Fallback to old format
+            terminal.print_consolidated_report(report, verbose=args.verbose)
 
         if args.pdf:
             path = pdf_report.write_consolidated_report(report)

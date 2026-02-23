@@ -217,3 +217,63 @@ class ConsolidatedReport:
     rebuttal_output: str | None = None
     consolidation_output: str | None = None
     metrics: RunMetrics | None = None
+
+
+@dataclass
+class MarketAnalysis:
+    """Comprehensive analysis for a single market including LLM probabilities and metrics."""
+    
+    market: MarketData
+    odds_table: OddsTable
+    
+    # LLM-estimated true probabilities (0-1)
+    llm_yes_prob: float
+    llm_no_prob: float
+    
+    # Calculated metrics
+    yes_edge: float  # llm_yes - market_yes_implied
+    no_edge: float   # llm_no - market_no_implied
+    yes_ev: float    # Expected value per cent for YES
+    no_ev: float     # Expected value per cent for NO
+    yes_roi: float   # Return on investment % for YES
+    no_roi: float    # Return on investment % for NO
+    
+    # Best side (highest edge)
+    best_edge: float
+    best_ev: float
+    best_side: str  # "YES" or "NO"
+    best_roi: float
+    
+    # Classification
+    sentiment: str  # "Bullish", "Neutral", "Bearish"
+    confidence: str  # "High", "Medium", "Low"
+    reason: str  # "stats", "injury", "form", "news", "data", "record", "consensus", "volume", "schedule", "weather", "momentum", "unclear"
+    
+    # Context and analysis
+    web_context: str
+    llm_analysis: str
+    
+    @property
+    def market_yes_implied(self) -> float:
+        """Market implied probability for YES."""
+        return self.odds_table.yes_row.implied_prob
+    
+    @property
+    def market_no_implied(self) -> float:
+        """Market implied probability for NO."""
+        return self.odds_table.no_row.implied_prob
+    
+    def to_summary_row(self) -> dict:
+        """Convert to summary table row format."""
+        return {
+            "market": self.market.title,
+            "best_edge": self.best_edge,
+            "best_ev": self.best_ev,
+            "sentiment": self.sentiment,
+            "roi": self.best_roi,
+            "rec": "BUY" if self.best_edge >= 0.05 else ("SELL" if self.best_edge <= -0.05 else "HOLD"),
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "volume": self.market.volume,
+            "oi": self.market.open_interest,
+        }

@@ -311,7 +311,7 @@ def print_report(report: ReportData, verbose: bool = False) -> None:
 
 def print_consolidated_report(report: ConsolidatedReport, verbose: bool = False) -> None:
     """Print deep research report: all market tables + consolidation output."""
-    console.print(f"\n[bold cyan]{'═' * 62}[/bold cyan]")
+    console.print(f"\n[bold cyan]{'═' * 78}[/bold cyan]")
     console.print("[bold white]DEEP RESEARCH — CONSOLIDATED REPORT[/bold white]")
     console.print(
         f"[dim]Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M:%S')}  |  "
@@ -323,7 +323,7 @@ def print_consolidated_report(report: ConsolidatedReport, verbose: bool = False)
         print_odds_table(t)
 
     if report.consolidation_output:
-        console.print(f"\n[bold yellow]{'─' * 62}[/bold yellow]")
+        console.print(f"\n[bold yellow]{'─' * 78}[/bold yellow]")
         console.print("[bold yellow]Final Analysis & Recommendations[/bold yellow]")
         console.print(report.consolidation_output)
 
@@ -336,6 +336,293 @@ def print_consolidated_report(report: ConsolidatedReport, verbose: bool = False)
             if content:
                 console.print(f"\n[bold dim]── {label} ──[/bold dim]")
                 console.print(content, style="dim")
+
+
+def print_enhanced_consolidated_report(
+    analyses: list,
+    generated_at: datetime.datetime,
+    model: str,
+    verbose: bool = False,
+) -> None:
+    """Print enhanced consolidated report with all 8 sections matching PDF format.
+    
+    Args:
+        analyses: List of MarketAnalysis objects
+        generated_at: Report generation timestamp
+        model: LLM model used
+        verbose: Show detailed web context
+    """
+    from kalshi_sports_edge.models import MarketAnalysis
+    
+    analyses = [a for a in analyses if isinstance(a, MarketAnalysis)]
+    if not analyses:
+        console.print("[yellow]No analyses to display.[/yellow]")
+        return
+    
+    # Section 1: Header
+    console.print(f"\n[bold cyan]{'═' * 78}[/bold cyan]")
+    console.print("[bold white]CONSOLIDATED MARKET REPORT[/bold white]")
+    console.print(
+        f"[dim]Generated {generated_at.strftime('%Y-%m-%d %H:%M:%S')} · "
+        f"{len(analyses)} markets · {model} · deep-research[/dim]"
+    )
+    console.print(f"[bold cyan]{'═' * 78}[/bold cyan]")
+    
+    # Section 2: Summary Table
+    _print_summary_table(analyses)
+    
+    # Section 3: Top Picks by Edge
+    _print_top_picks_by_edge(analyses)
+    
+    # Section 4: Top Picks by EV
+    _print_top_picks_by_ev(analyses)
+    
+    # Section 5: Markets to Avoid
+    _print_markets_to_avoid(analyses)
+    
+    # Section 6: Mini Odds Overview
+    _print_mini_odds_overview(analyses)
+    
+    # Section 7: Legend
+    _print_why_legend()
+    
+    if verbose:
+        console.print(f"\n[bold dim]{'─' * 78}[/bold dim]")
+        console.print("[bold dim]Detailed Web Research Context[/bold dim]")
+        for analysis in analyses[:3]:  # Show first 3
+            console.print(f"\n[bold]{analysis.market.title}[/bold]")
+            console.print(analysis.web_context[:500] + "...", style="dim")
+
+
+def _print_summary_table(analyses: list) -> None:
+    """Print Section 2: Summary Table (All Markets)."""
+    console.print("\n[bold yellow]SUMMARY TABLE[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("Market", width=28, no_wrap=True)
+    tbl.add_column("Best Edge", justify="right", width=10)
+    tbl.add_column("Best EV", justify="right", width=9)
+    tbl.add_column("Sentiment", justify="center", width=10)
+    tbl.add_column("ROI", justify="right", width=8)
+    tbl.add_column("Rec", justify="center", width=6)
+    tbl.add_column("Conf", justify="center", width=6)
+    tbl.add_column("Why", width=10)
+    
+    for analysis in analyses[:30]:  # Top 30
+        # Determine recommendation
+        if analysis.best_edge >= 0.05:
+            rec = "BUY"
+            rec_style = "green"
+        elif analysis.best_edge <= -0.05:
+            rec = "SELL"
+            rec_style = "red"
+        else:
+            rec = "HOLD"
+            rec_style = "dim"
+        
+        # Sentiment color
+        if analysis.sentiment == "Bullish":
+            sent_style = "green"
+        elif analysis.sentiment == "Bearish":
+            sent_style = "red"
+        else:
+            sent_style = "dim"
+        
+        market_name = analysis.market.title[:27]
+        
+        tbl.add_row(
+            market_name,
+            f"{analysis.best_edge:+.2f}",
+            f"{analysis.best_ev:+.3f}",
+            f"[{sent_style}]{analysis.sentiment}[/{sent_style}]",
+            f"{analysis.best_roi:+.1f}%",
+            f"[{rec_style}]{rec}[/{rec_style}]",
+            analysis.confidence,
+            analysis.reason[:9],
+        )
+    
+    console.print(tbl)
+
+
+def _print_top_picks_by_edge(analyses: list) -> None:
+    """Print Section 3: Top Picks by Edge."""
+    console.print("\n[bold yellow]TOP PICKS BY EDGE[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    # Filter for |edge| >= 5% and sort
+    edge_picks = [a for a in analyses if abs(a.best_edge) >= 0.05]
+    edge_picks.sort(key=lambda x: abs(x.best_edge), reverse=True)
+    
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("Rank", justify="right", width=5)
+    tbl.add_column("Market", width=32, no_wrap=True)
+    tbl.add_column("Edge", justify="right", width=9)
+    tbl.add_column("Volume", justify="right", width=12)
+    tbl.add_column("Rec", justify="center", width=7)
+    tbl.add_column("Conf", justify="center", width=6)
+    
+    for i, analysis in enumerate(edge_picks[:15], 1):
+        rec = "BUY" if analysis.best_edge >= 0.05 else "SELL"
+        rec_style = "green" if rec == "BUY" else "red"
+        
+        vol_str = _fmt_dollars(analysis.market.volume)
+        
+        tbl.add_row(
+            f"#{i}",
+            analysis.market.title[:31],
+            f"{analysis.best_edge*100:+.1f}%",
+            vol_str,
+            f"[{rec_style}]{rec}[/{rec_style}]",
+            analysis.confidence,
+        )
+    
+    console.print(tbl)
+
+
+def _print_top_picks_by_ev(analyses: list) -> None:
+    """Print Section 4: Top Picks by EV."""
+    console.print("\n[bold yellow]TOP PICKS BY EV[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    # Filter for positive EV and sort
+    ev_picks = [a for a in analyses if a.best_ev > 0]
+    ev_picks.sort(key=lambda x: x.best_ev, reverse=True)
+    
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("Rank", justify="right", width=5)
+    tbl.add_column("Market", width=32, no_wrap=True)
+    tbl.add_column("EV/c", justify="right", width=9)
+    tbl.add_column("ROI", justify="right", width=8)
+    tbl.add_column("Rec", justify="center", width=7)
+    tbl.add_column("Volume", justify="right", width=12)
+    
+    for i, analysis in enumerate(ev_picks[:15], 1):
+        vol_str = _fmt_dollars(analysis.market.volume)
+        
+        tbl.add_row(
+            f"#{i}",
+            analysis.market.title[:31],
+            f"{analysis.best_ev:+.3f}",
+            f"{analysis.best_roi:+.1f}%",
+            "[green]BUY[/green]",
+            vol_str,
+        )
+    
+    console.print(tbl)
+
+
+def _print_markets_to_avoid(analyses: list) -> None:
+    """Print Section 5: Markets to Avoid."""
+    console.print("\n[bold yellow]MARKETS TO AVOID[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    # No edge or negative EV
+    avoid = [a for a in analyses if abs(a.best_edge) < 0.05 or a.best_ev <= 0]
+    
+    if not avoid:
+        console.print("[dim]None — all markets show positive edge.[/dim]")
+        return
+    
+    for analysis in avoid[:10]:
+        console.print(
+            f"  [dim]{analysis.market.title[:50]:50s} | "
+            f"Edge: {analysis.best_edge*100:+.1f}% | "
+            f"EV: {analysis.best_ev:+.3f}/c[/dim]"
+        )
+
+
+def _print_mini_odds_overview(analyses: list) -> None:
+    """Print Section 6: Mini Odds Overview (Per Market)."""
+    console.print("\n[bold yellow]MINI ODDS OVERVIEW[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    for analysis in analyses[:20]:  # Show first 20
+        console.print(f"\n[bold]{analysis.market.title}[/bold]")
+        
+        tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+        tbl.add_column("Outcome", width=25)
+        tbl.add_column("Market %", justify="right", width=10)
+        tbl.add_column("LLM %", justify="right", width=10)
+        tbl.add_column("Edge", justify="right", width=9)
+        tbl.add_column("EV/c", justify="right", width=8)
+        tbl.add_column("ROI", justify="right", width=8)
+        
+        # YES row
+        yes_team = analysis.market.yes_team or "YES"
+        yes_edge_str = f"{analysis.yes_edge*100:+.1f}%"
+        yes_ev_str = f"{analysis.yes_ev:+.3f}"
+        yes_roi_str = f"{analysis.yes_roi:+.1f}%"
+        
+        if analysis.yes_edge >= 0.05:
+            yes_style = "green"
+            yes_edge_str += "s"  # signal
+        elif analysis.yes_edge <= -0.05:
+            yes_style = "red"
+            yes_edge_str += "t"  # toxic
+        else:
+            yes_style = ""
+        
+        tbl.add_row(
+            f"{yes_team} (YES)",
+            f"{analysis.market_yes_implied:.1%}",
+            f"{analysis.llm_yes_prob:.1%}",
+            yes_edge_str,
+            yes_ev_str,
+            yes_roi_str,
+            style=yes_style,
+        )
+        
+        # NO row
+        no_team = analysis.market.no_team or "NO"
+        no_edge_str = f"{analysis.no_edge*100:+.1f}%"
+        no_ev_str = f"{analysis.no_ev:+.3f}"
+        no_roi_str = f"{analysis.no_roi:+.1f}%"
+        
+        if analysis.no_edge >= 0.05:
+            no_style = "green"
+            no_edge_str += "s"
+        elif analysis.no_edge <= -0.05:
+            no_style = "red"
+            no_edge_str += "t"
+        else:
+            no_style = ""
+        
+        tbl.add_row(
+            f"{no_team} (NO)",
+            f"{analysis.market_no_implied:.1%}",
+            f"{analysis.llm_no_prob:.1%}",
+            no_edge_str,
+            no_ev_str,
+            no_roi_str,
+            style=no_style,
+        )
+        
+        console.print(tbl)
+
+
+def _print_why_legend() -> None:
+    """Print Section 7: Why Column Legend."""
+    console.print("\n[bold yellow]WHY COLUMN LEGEND[/bold yellow]")
+    console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
+    
+    legend_items = [
+        ("stats", "Team/player statistics drove the estimate"),
+        ("injury", "Player injury status is the key variable"),
+        ("form", "Recent form/performance trend is decisive"),
+        ("news", "Breaking news materially changes the outlook"),
+        ("data", "Market or historical base-rate data used"),
+        ("record", "Head-to-head record is the main reference"),
+        ("consensus", "Expert or public consensus is the anchor"),
+        ("volume", "Trading volume signals informed positioning"),
+        ("schedule", "Schedule strength or matchup context"),
+        ("weather", "Weather/field conditions are the swing factor"),
+        ("momentum", "Recent momentum swing is the key signal"),
+        ("unclear", "Insufficient information to be confident"),
+    ]
+    
+    for key, desc in legend_items:
+        console.print(f"  [bold]{key:12s}[/bold] {desc}")
 
 
 def print_run_summary(metrics: RunMetrics) -> None:
