@@ -40,6 +40,7 @@ class CLIArgs:
     limit: int
     min_volume: int
     min_open_interest: int
+    exclude_started: bool  # Filter out games that have already started
 
     # LLM
     llm: bool
@@ -54,6 +55,7 @@ class CLIArgs:
     edge_threshold: float
     pdf: bool
     verbose: bool
+    summary: bool  # Quick summary view sorted by volume
 
 
 def parse_args(argv: list[str] | None = None) -> CLIArgs:
@@ -67,7 +69,10 @@ examples:
   %(prog)s --search "Bears" --llm                   # search + LLM single-pass
   %(prog)s --pick 5 --min-volume 500 --deep-research # top-5 with deep research
   %(prog)s --date 2026-03-01 --llm --pdf            # markets closing on date
-  %(prog)s --pick 10 --provider kimi --llm           # use Kimi instead of Claude
+  %(prog)s --pick 10 --provider kimi --llm          # use Kimi Code
+  %(prog)s --pick 10 --provider moonshot --llm      # use Moonshot AI (kimi-k2-5)
+  %(prog)s --pick 20 --summary                      # quick summary, sorted by volume
+  %(prog)s --search "NBA" --no-exclude-started      # include already-started games
         """,
     )
 
@@ -105,6 +110,11 @@ examples:
         dest="min_open_interest", metavar="N",
         help="Minimum open interest in contracts (default: 0)",
     )
+    parser.add_argument(
+        "--exclude-started", action=argparse.BooleanOptionalAction,
+        default=True, dest="exclude_started",
+        help="Exclude games that have already started (default: True)",
+    )
 
     # LLM
     parser.add_argument(
@@ -112,8 +122,8 @@ examples:
         help="Run LLM single-pass analysis (requires provider API key env var)",
     )
     parser.add_argument(
-        "--provider", choices=["claude", "kimi"], default="claude",
-        help="LLM provider: claude (Anthropic) or kimi (Moonshot AI) — default: claude",
+        "--provider", choices=["claude", "kimi", "moonshot"], default="claude",
+        help="LLM provider: claude (Anthropic), kimi (Kimi Code), or moonshot (Moonshot AI) — default: claude",  # noqa: E501
     )
     parser.add_argument(
         "--model", metavar="MODEL",
@@ -144,6 +154,10 @@ examples:
         "--verbose", action="store_true",
         help="Print web context and deep-research stage transcripts",
     )
+    parser.add_argument(
+        "--summary", action="store_true",
+        help="Show quick summary table sorted by volume (no detailed analysis)",
+    )
 
     ns = parser.parse_args(argv)
 
@@ -158,6 +172,7 @@ examples:
         limit=ns.limit,
         min_volume=ns.min_volume,
         min_open_interest=ns.min_open_interest,
+        exclude_started=ns.exclude_started,
         llm=use_llm,
         provider=ns.provider,
         model=ns.model or PROVIDER_DEFAULT_MODELS[ns.provider],
@@ -166,6 +181,7 @@ examples:
         edge_threshold=ns.edge_threshold,
         pdf=ns.pdf,
         verbose=ns.verbose,
+        summary=ns.summary,
     )
 
     _validate_args(args)

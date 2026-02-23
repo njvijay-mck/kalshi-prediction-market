@@ -1,7 +1,9 @@
 """LLM single-pass analysis for Kalshi sports markets.
 
-Both Claude and Kimi are accessed via OpenAI-compatible endpoints using the
-openai Python SDK. Only the base_url, api_key, and model differ between providers.
+Providers:
+  - claude: Uses Anthropic SDK (api.anthropic.com)
+  - kimi: Uses Anthropic SDK with Kimi Code endpoint (api.kimi.com/coding)
+  - moonshot: Uses OpenAI SDK (api.moonshot.cn/v1)
 
 Single-pass pipeline:
   1. Build a structured prompt with market data, odds table, and optional web context
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Protocol
 
 import openai
 
@@ -20,10 +23,63 @@ from kalshi_sports_edge.config import PROVIDER_BASE_URLS, PROVIDER_DEFAULT_MODEL
 from kalshi_sports_edge.models import MarketData, OddsTable, ReportData
 
 
-def get_llm_client(provider: str) -> openai.OpenAI:
-    """Build an OpenAI-compatible client for the given provider.
+class LLMClient(Protocol):
+    """Protocol for LLM clients (OpenAI or Anthropic compatible)."""
 
-    Both 'claude' and 'kimi' use the openai SDK with different base_url/api_key.
+    def chat(self, system: str, user: str, max_tokens: int) -> str:
+        """Send a chat request and return the response text."""
+        ...
+
+
+class OpenAIClientWrapper:
+    """Wrapper around OpenAI SDK."""
+
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
+
+    def chat(self, model: str, system: str, user: str, max_tokens: int) -> str:
+        resp = self._client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content or ""
+
+
+class AnthropicClientWrapper:
+    """Wrapper around Anthropic SDK (also used by Kimi Code)."""
+
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        import anthropic
+
+        self._client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
+
+    def chat(self, model: str, system: str, user: str, max_tokens: int) -> str:
+        import anthropic
+
+        msg = self._client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": user}],
+            system=system,
+        )
+        # Handle content blocks - we expect TextBlock for standard responses
+        first_block = msg.content[0]
+        if isinstance(first_block, anthropic.types.TextBlock):
+            return first_block.text
+        return str(first_block)
+
+
+def get_llm_client(provider: str) -> OpenAIClientWrapper | AnthropicClientWrapper:
+    """Build an LLM client for the given provider.
+
+    - claude: Anthropic SDK
+    - kimi: Anthropic SDK with Kimi Code base URL
+    - moonshot: OpenAI SDK
+
     Raises ValueError if the required API key env var is not set.
     """
     env_key = PROVIDER_ENV_KEYS[provider]
@@ -33,10 +89,12 @@ def get_llm_client(provider: str) -> openai.OpenAI:
             f"Missing env var '{env_key}' required for provider '{provider}'. "
             f"Add it to your .env file."
         )
-    return openai.OpenAI(
-        api_key=api_key,
-        base_url=PROVIDER_BASE_URLS[provider],
-    )
+
+    base_url = PROVIDER_BASE_URLS.get(provider)
+
+    if provider in ("claude", "kimi"):
+        return AnthropicClientWrapper(api_key=api_key, base_url=base_url)
+    return OpenAIClientWrapper(api_key=api_key, base_url=base_url)
 
 
 def get_default_model(provider: str) -> str:
@@ -46,7 +104,7 @@ def get_default_model(provider: str) -> str:
 def run_single_pass(
     market: MarketData,
     odds_table: OddsTable,
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     model: str,
     web_context: str | None = None,
     edge_threshold: float = 0.05,
@@ -57,16 +115,33 @@ def run_single_pass(
     Parsing is tolerant — missing sections result in None fields, not errors.
     """
     prompt = _build_prompt(market, odds_table, web_context, edge_threshold)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=1200,
-    )
-    raw = response.choices[0].message.content or ""
+    try:
+        raw = client.chat(
+            model=model,
+            system=_SYSTEM_PROMPT,
+            user=prompt,
+            max_tokens=1200,
+        )
+    except Exception as exc:
+        # Handle both OpenAI and Anthropic error types
+        error_str = str(exc).lower()
+        if "401" in str(exc) or "authentication" in error_str:
+            raise AuthenticationError(
+                f"Authentication failed for {market.ticker}. "
+                f"Check your API key is valid for the selected provider."
+            ) from exc
+        if "403" in str(exc) or "permission" in error_str:
+            raise AuthenticationError(
+                "Kimi Code API access denied (403). The kimi.com/code API may be "
+                "restricted to approved coding agents. Try --provider moonshot instead, "
+                "or obtain a standard Moonshot API key from https://platform.moonshot.cn"
+            ) from exc
+        raise
     return _parse_response(raw, market, odds_table, edge_threshold, web_context)
+
+
+class AuthenticationError(Exception):
+    """Raised when LLM API authentication fails."""
 
 
 # ---------------------------------------------------------------------------

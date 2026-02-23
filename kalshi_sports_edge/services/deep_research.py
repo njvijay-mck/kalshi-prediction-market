@@ -14,15 +14,18 @@ from __future__ import annotations
 
 import datetime
 
-import openai
-
 from kalshi_sports_edge.models import ConsolidatedReport, MarketData, OddsTable
+from kalshi_sports_edge.services.llm_pipeline import (
+    AnthropicClientWrapper,
+    AuthenticationError,
+    OpenAIClientWrapper,
+)
 
 
 def run_deep_research(
     markets: list[MarketData],
     odds_tables: list[OddsTable],
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     model: str,
     web_context: str | None = None,
 ) -> ConsolidatedReport:
@@ -64,7 +67,7 @@ def run_deep_research(
 def _research_stage(
     market_summary: str,
     web_context: str | None,
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     model: str,
 ) -> str:
     ctx_block = f"\n\n## Web Context\n{web_context}" if web_context else ""
@@ -88,7 +91,9 @@ For each market provide:
     )
 
 
-def _critique_stage(research: str, client: openai.OpenAI, model: str) -> str:
+def _critique_stage(
+    research: str, client: OpenAIClientWrapper | AnthropicClientWrapper, model: str
+) -> str:
     return _call(
         system=(
             "You are a rigorous devil's advocate analyst. "
@@ -111,7 +116,7 @@ Be specific. Quote specific claims from the research and explain why they may be
 
 
 def _rebuttal_stage(
-    research: str, critique: str, client: openai.OpenAI, model: str
+    research: str, critique: str, client: OpenAIClientWrapper | AnthropicClientWrapper, model: str
 ) -> str:
     return _call(
         system=(
@@ -141,7 +146,7 @@ def _consolidation_stage(
     research: str,
     critique: str,
     rebuttal: str,
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     model: str,
 ) -> str:
     return _call(
@@ -195,19 +200,26 @@ Remaining uncertainties that could invalidate these recommendations.""",
 def _call(
     system: str,
     user: str,
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     model: str,
     max_tokens: int = 2048,
 ) -> str:
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        max_tokens=max_tokens,
-    )
-    return resp.choices[0].message.content or ""
+    try:
+        return client.chat(model=model, system=system, user=user, max_tokens=max_tokens)
+    except Exception as exc:
+        # Handle both OpenAI and Anthropic error types
+        error_str = str(exc).lower()
+        if "401" in str(exc) or "authentication" in error_str:
+            raise AuthenticationError(
+                "Authentication failed. Check your API key is valid for the selected provider."
+            ) from exc
+        if "403" in str(exc) or "permission" in error_str:
+            raise AuthenticationError(
+                "Kimi Code API access denied (403). The kimi.com/code API may be "
+                "restricted to approved coding agents. Try --provider moonshot instead, "
+                "or obtain a standard Moonshot API key from https://platform.moonshot.cn"
+            ) from exc
+        raise
 
 
 # ---------------------------------------------------------------------------

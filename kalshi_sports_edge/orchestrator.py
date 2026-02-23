@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import datetime
 
-import openai
-
 from kalshi_sports_edge.cli import CLIArgs
 from kalshi_sports_edge.models import MarketData, OddsTable, ReportData, RunMetrics
 from kalshi_sports_edge.output import pdf_report, terminal
@@ -23,6 +21,10 @@ from kalshi_sports_edge.services import (
     odds_engine,
     web_search,
 )
+from kalshi_sports_edge.services.llm_pipeline import (
+    AnthropicClientWrapper,
+    OpenAIClientWrapper,
+)
 
 
 def run(args: CLIArgs) -> int:
@@ -30,7 +32,7 @@ def run(args: CLIArgs) -> int:
     metrics = RunMetrics(started_at=datetime.datetime.now())
 
     # Build LLM client up-front so we fail fast on missing API key
-    llm_client: openai.OpenAI | None = None
+    llm_client: OpenAIClientWrapper | AnthropicClientWrapper | None = None
     if args.llm:
         try:
             llm_client = llm_pipeline.get_llm_client(args.provider)
@@ -67,7 +69,36 @@ def run(args: CLIArgs) -> int:
         return 0
 
     metrics.markets_fetched = len(markets)
+
+    # --- Filter out games that have already started ---
+    if args.exclude_started:
+        started_count = sum(1 for m in markets if m.has_started())
+        if started_count > 0:
+            markets = [m for m in markets if not m.has_started()]
+            terminal.console.print(
+                f"[dim]Excluded {started_count} market(s) that have already started.[/dim]"
+            )
+
     metrics.markets_after_filter = len(markets)
+
+    # Check if all markets were filtered out
+    if not markets:
+        terminal.console.print(
+            "[yellow]No upcoming markets to display after filtering started games.[/yellow]"
+        )
+        metrics.finished_at = datetime.datetime.now()
+        terminal.print_run_summary(metrics)
+        return 0
+
+    # --- Quick summary view (sorted by volume, no detailed analysis) ---
+    if args.summary:
+        from kalshi_sports_edge.services.market_utils import group_markets_by_game
+        terminal.print_volume_summary(markets)
+        games = group_markets_by_game(markets)
+        metrics.games_analyzed = len(games)
+        metrics.finished_at = datetime.datetime.now()
+        terminal.print_run_summary(metrics)
+        return 0
 
     # --- Build odds tables (skip markets with no price data) ---
     valid_markets: list[MarketData] = []
@@ -143,6 +174,10 @@ def run(args: CLIArgs) -> int:
                     path = pdf_report.write_single_report(report)
                     terminal.console.print(f"[green]PDF saved → {path}[/green]")
 
+        except llm_pipeline.AuthenticationError as exc:
+            terminal.console.print(f"[red]Authentication Error: {exc}[/red]")
+            metrics.errors.append(str(exc))
+            return 1
         except Exception as exc:
             for m in group_markets:
                 terminal.console.print(f"[red]Error processing {m.ticker}: {exc}[/red]")
@@ -156,7 +191,7 @@ def run(args: CLIArgs) -> int:
 def _run_deep_research(
     markets: list[MarketData],
     odds_tables: list[OddsTable],
-    client: openai.OpenAI,
+    client: OpenAIClientWrapper | AnthropicClientWrapper,
     args: CLIArgs,
     web_ctx: str | None,
     metrics: RunMetrics,
@@ -184,6 +219,10 @@ def _run_deep_research(
 
         return 0
 
+    except llm_pipeline.AuthenticationError as exc:
+        terminal.console.print(f"[red]Authentication Error: {exc}[/red]")
+        metrics.errors.append(str(exc))
+        return 1
     except Exception as exc:
         terminal.console.print(f"[red]Deep research failed: {exc}[/red]")
         metrics.errors.append(str(exc))

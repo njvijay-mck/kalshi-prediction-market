@@ -341,13 +341,146 @@ def print_consolidated_report(report: ConsolidatedReport, verbose: bool = False)
 def print_run_summary(metrics: RunMetrics) -> None:
     """Print a compact one-line run summary with elapsed time and error count."""
     console.print(f"\n[dim]{'─' * 62}[/dim]")
-    parts = [
-        f"Markets: {metrics.markets_after_filter}/{metrics.markets_fetched}",
+    parts = []
+
+    # Show games if tracked, otherwise markets
+    if metrics.games_analyzed > 0:
+        parts.append(f"Games: {metrics.games_analyzed}")
+    else:
+        parts.append(f"Markets: {metrics.markets_after_filter}/{metrics.markets_fetched}")
+
+    parts.extend([
         f"LLM calls: {metrics.llm_calls_made}",
         f"Web searches: {metrics.web_searches_made}",
-    ]
+    ])
     if metrics.elapsed_seconds is not None:
         parts.append(f"Time: {metrics.elapsed_seconds:.1f}s")
     console.print(f"[dim]{' | '.join(parts)}[/dim]")
     for err in metrics.errors:
         console.print(f"[red]⚠ {err}[/red]")
+
+
+def print_volume_summary(
+    markets: list[MarketData],
+    title: str = "Games Summary (sorted by combined volume)",
+) -> None:
+    """Print a compact table of games grouped by event, sorted by combined volume."""
+    from kalshi_sports_edge.services.market_utils import group_markets_by_game
+
+    if not markets:
+        console.print("[yellow]No markets to display.[/yellow]")
+        return
+
+    # Group markets by game (combines both sides)
+    games = group_markets_by_game(markets)
+
+    if not games:
+        # Fallback: show individual markets if grouping failed
+        _print_individual_markets(markets, title)
+        return
+
+    console.print(f"\n[bold cyan]{'─' * 100}[/bold cyan]")
+    console.print(f"[bold white]{title}[/bold white]")
+    now_str = datetime.datetime.now(_EST).strftime('%Y-%m-%d %H:%M ET')
+    summary_line = (
+        f"[dim]Total: {len(games)} games ({len(markets)} markets) | "
+        f"Time: {now_str} | By Volume[/dim]"
+    )
+    console.print(summary_line)
+    console.print(f"[bold cyan]{'─' * 100}[/bold cyan]")
+
+    # Table: Rank | Event | Matchup | Time | Team A Price | Team B Price | Combined Vol | OI
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("#", justify="right", width=3)
+    tbl.add_column("Event Ticker", style="bold cyan", width=24, no_wrap=True)
+    tbl.add_column("Matchup", width=22, no_wrap=True)
+    tbl.add_column("Time", width=10, no_wrap=True)
+    tbl.add_column("Prices (YES-NO)", justify="center", width=22)
+    tbl.add_column("Volume", justify="right", width=10)
+
+    for i, game in enumerate(games, 1):
+        # Format matchup
+        matchup = f"{game.team_a_abbrev} vs {game.team_b_abbrev}"
+
+        # Game start time
+        game_time = _fmt_game_start(game.expected_expiration_time) or "TBD"
+
+        # Prices: YES-NO for each team
+        # Team A YES price = X, NO price = 100-X
+        # Team B YES price = Y, NO price = 100-Y
+        team_a_yes = game.team_a_market.mid_price
+        team_b_yes = game.team_b_market.mid_price
+
+        if team_a_yes is not None and team_b_yes is not None:
+            team_a_no = 100 - team_a_yes
+            team_b_no = 100 - team_b_yes
+            # Display: A: 45-55 | B: 55-45
+            price_str = (
+                f"[green]{game.team_a_abbrev}[/green]: {team_a_yes}-{team_a_no} | "
+                f"[blue]{game.team_b_abbrev}[/blue]: {team_b_yes}-{team_b_no}"
+            )
+        else:
+            price_str = "—"
+
+        # Combined volume
+        vol_str = _fmt_dollars(game.combined_volume)
+
+        # Highlight started games in dim
+        style = "dim" if game.has_started() else ""
+
+        tbl.add_row(
+            str(i),
+            game.event_ticker,
+            matchup,
+            game_time,
+            price_str,
+            vol_str,
+            style=style,
+        )
+
+    console.print(tbl)
+
+    # Legend
+    console.print("[dim]  • Prices shown as YES-NO (cents). Binary: YES + NO = 100¢[/dim]")
+    console.print("[dim]  • Example: SAS: 45-55 = SAS YES at 45¢, SAS NO at 55¢[/dim]")
+    console.print("[dim]  • Dimmed rows indicate games that may have already started[/dim]")
+
+
+def _print_individual_markets(
+    markets: list[MarketData],
+    title: str = "Markets Summary",
+) -> None:
+    """Fallback: print individual markets when grouping fails."""
+    sorted_markets = sorted(markets, key=lambda m: m.volume, reverse=True)
+
+    console.print(f"\n[bold cyan]{'─' * 80}[/bold cyan]")
+    console.print(f"[bold white]{title}[/bold white]")
+    console.print(f"[dim]{len(markets)} individual markets | By Volume[/dim]")
+    console.print(f"[bold cyan]{'─' * 80}[/bold cyan]")
+
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("#", justify="right", width=3)
+    tbl.add_column("Ticker", style="bold", width=30, no_wrap=True)
+    tbl.add_column("Team", width=15, no_wrap=True)
+    tbl.add_column("YES", justify="right", width=6)
+    tbl.add_column("NO", justify="right", width=6)
+    tbl.add_column("Volume", justify="right", width=10)
+
+    for i, m in enumerate(sorted_markets, 1):
+        team = m.yes_team or "?"
+        yes = m.mid_price if m.mid_price is not None else 0
+        no = 100 - yes if yes else 0
+        vol_str = _fmt_dollars(m.volume)
+        style = "dim" if m.has_started() else ""
+
+        tbl.add_row(
+            str(i),
+            m.ticker,
+            team[:15],
+            f"{yes}¢" if yes else "—",
+            f"{no}¢" if no else "—",
+            vol_str,
+            style=style,
+        )
+
+    console.print(tbl)
