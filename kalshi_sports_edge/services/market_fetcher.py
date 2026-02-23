@@ -24,6 +24,7 @@ from auth.client import raw_get
 from kalshi_sports_edge.config import (
     MAX_PAGE_SIZE,
     RATE_LIMIT_SLEEP_S,
+    SPORT_CATEGORIES,
     SPORTS_CATEGORY,
     SPORTS_TICKER_PREFIXES,
     US_SPORTS_GAME_SERIES,
@@ -51,13 +52,22 @@ def fetch_by_keyword(
     limit: int = 10,
     min_volume: int = 0,
     min_open_interest: int = 0,
+    sports: list[str] | None = None,
 ) -> list[MarketData]:
     """Search open sports game markets whose title or ticker contains query.
 
-    Fetches from sports game series (not the flat /markets endpoint).
-    Filtering is client-side — Kalshi has no server-side text search.
+    Fetches ALL markets from selected sports, sorts by volume descending,
+    then applies filters and limit.
+    
+    Args:
+        query: Search query string
+        limit: Maximum number of markets to return
+        min_volume: Minimum volume filter
+        min_open_interest: Minimum open interest filter
+        sports: Optional list of sports to filter by (e.g., ['soccer', 'tennis'])
     """
-    markets = _fetch_via_sports_series(target=max(limit * 10, 200))
+    # Fetch ALL markets from selected sports
+    markets = _fetch_all_sports_markets(sports=sports)
     query_lower = query.lower()
     matched = [
         m for m in markets
@@ -65,7 +75,9 @@ def fetch_by_keyword(
         or query_lower in m.ticker.lower()
         or query_lower in m.event_ticker.lower()
     ]
-    return _apply_filters(matched, min_volume, min_open_interest)[:limit]
+    # Sort by volume descending, then apply filters and limit
+    sorted_markets = sorted(matched, key=lambda m: m.volume, reverse=True)
+    return _apply_filters(sorted_markets, min_volume, min_open_interest)[:limit]
 
 
 def fetch_by_date(
@@ -73,26 +85,51 @@ def fetch_by_date(
     limit: int = 50,
     min_volume: int = 0,
     min_open_interest: int = 0,
+    sports: list[str] | None = None,
 ) -> list[MarketData]:
     """Fetch open sports markets whose game date matches game_date.
 
-    Filters by game_date (parsed from event_ticker), not market close/settlement time.
-    Fetches from sports game series. No server-side date filter exists.
+    Fetches ALL markets from selected sports, filters by game date,
+    sorts by volume descending, then applies filters and limit.
+    
+    Args:
+        game_date: Date to filter markets by
+        limit: Maximum number of markets to return
+        min_volume: Minimum volume filter
+        min_open_interest: Minimum open interest filter
+        sports: Optional list of sports to filter by (e.g., ['soccer', 'tennis'])
     """
-    markets = _fetch_via_sports_series(target=max(limit * 10, 300))
+    # Fetch ALL markets from selected sports
+    markets = _fetch_all_sports_markets(sports=sports)
     on_date = [m for m in markets if m.game_date == game_date]
-    return _apply_filters(on_date, min_volume, min_open_interest)[:limit]
+    # Sort by volume descending, then apply filters and limit
+    sorted_markets = sorted(on_date, key=lambda m: m.volume, reverse=True)
+    return _apply_filters(sorted_markets, min_volume, min_open_interest)[:limit]
 
 
 def fetch_top_n(
     n: int,
     min_volume: int = 0,
     min_open_interest: int = 0,
+    sports: list[str] | None = None,
 ) -> list[MarketData]:
-    """Fetch top N open sports markets sorted by volume descending."""
-    markets = _fetch_via_sports_series(target=n * 10)
-    filtered = _apply_filters(markets, min_volume, min_open_interest)
-    return sorted(filtered, key=lambda m: m.volume, reverse=True)[:n]
+    """Fetch top N open sports markets sorted by volume descending.
+    
+    Fetches ALL markets from selected sports, sorts by volume descending,
+    then applies filters and returns top N.
+    
+    Args:
+        n: Number of markets to return
+        min_volume: Minimum volume filter
+        min_open_interest: Minimum open interest filter
+        sports: Optional list of sports to filter by (e.g., ['soccer', 'tennis'])
+    """
+    # Fetch ALL markets from selected sports
+    markets = _fetch_all_sports_markets(sports=sports)
+    # Sort by volume descending, then apply filters and limit
+    sorted_markets = sorted(markets, key=lambda m: m.volume, reverse=True)
+    filtered = _apply_filters(sorted_markets, min_volume, min_open_interest)
+    return filtered[:n]
 
 
 def is_sports_market(market: MarketData) -> bool:
@@ -113,19 +150,104 @@ def is_sports_market(market: MarketData) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_via_sports_series(target: int) -> list[MarketData]:
+def _fetch_all_sports_markets(
+    sports: list[str] | None = None,
+) -> list[MarketData]:
+    """Fetch ALL individual game markets from selected sports.
+
+    For each series in US_SPORTS_GAME_SERIES (or filtered by sports):
+      GET /events?series_ticker=<series>&status=open&with_nested_markets=true
+    Markets embedded in each event are extracted and deduplicated by ticker.
+
+    Fetches ALL markets from all selected series (no early stopping).
+    
+    Args:
+        sports: Optional list of sports to filter by (e.g., ['soccer', 'tennis'])
+    
+    Returns:
+        List of all MarketData objects from selected sports
+    """
+    seen: set[str] = set()
+    results: list[MarketData] = []
+    
+    # Determine which series to fetch based on sports filter
+    if sports:
+        series_to_fetch: list[str] = []
+        for sport in sports:
+            sport_lower = sport.lower()
+            if sport_lower in SPORT_CATEGORIES:
+                series_to_fetch.extend(SPORT_CATEGORIES[sport_lower])
+    else:
+        series_to_fetch = US_SPORTS_GAME_SERIES
+
+    for series_ticker in series_to_fetch:
+        cursor: str | None = None
+        while True:
+            params: dict[str, object] = {
+                "status": "open",
+                "series_ticker": series_ticker,
+                "limit": 50,
+                "with_nested_markets": "true",
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            data = raw_get("/events", **params)
+            events = data.get("events", [])
+            if not events:
+                break
+
+            for event in events:
+                event_title = event.get("title", "")
+                for m_raw in event.get("markets", []):
+                    ticker = m_raw.get("ticker", "")
+                    # Markets embedded in events use status='active' (not 'open')
+                    status = m_raw.get("status", "")
+                    if ticker and ticker not in seen and status in ("open", "active"):
+                        seen.add(ticker)
+                        results.append(_parse_market_dict(m_raw, event_title=event_title))
+
+            cursor = data.get("cursor") or None
+            if not cursor:
+                break
+            time.sleep(RATE_LIMIT_SLEEP_S)
+
+    return results
+
+
+def _fetch_via_sports_series(
+    target: int,
+    sports: list[str] | None = None,
+) -> list[MarketData]:
     """Fetch individual game markets by iterating known sports event series.
 
-    For each series in US_SPORTS_GAME_SERIES:
+    DEPRECATED: Use _fetch_all_sports_markets() instead for full market fetching.
+    This function is kept for backward compatibility with get_available_game_dates.
+    
+    For each series in US_SPORTS_GAME_SERIES (or filtered by sports):
       GET /events?series_ticker=<series>&status=open&with_nested_markets=true
     Markets embedded in each event are extracted and deduplicated by ticker.
 
     Stops when target market count is reached or all series are exhausted.
+    
+    Args:
+        target: Target number of markets to fetch
+        sports: Optional list of sports to filter by (e.g., ['soccer', 'tennis'])
     """
     seen: set[str] = set()
     results: list[MarketData] = []
+    
+    # Determine which series to fetch based on sports filter
+    if sports:
+        series_to_fetch: list[str] = []
+        for sport in sports:
+            sport_lower = sport.lower()
+            if sport_lower in SPORT_CATEGORIES:
+                series_to_fetch.extend(SPORT_CATEGORIES[sport_lower])
+    else:
+        series_to_fetch = US_SPORTS_GAME_SERIES
 
-    for series_ticker in US_SPORTS_GAME_SERIES:
+    for series_ticker in series_to_fetch:
         if len(results) >= target:
             break
 
@@ -290,13 +412,20 @@ def _parse_market_dict(m: dict, event_title: str = "") -> MarketData:
     )
 
 
-def get_available_game_dates(sample: int = 300) -> list[str]:
+def get_available_game_dates(
+    sample: int = 300,
+    sports: list[str] | None = None,
+) -> list[str]:
     """Return sorted unique game dates from a broad sample of open sports markets.
 
     Used to provide date hints when --date returns no results.
     Returns ISO date strings like ["2026-02-22", "2026-02-24"].
+    
+    Args:
+        sample: Number of markets to sample
+        sports: Optional list of sports to filter by
     """
-    markets = _fetch_via_sports_series(target=sample)
+    markets = _fetch_via_sports_series(target=sample, sports=sports)
     dates: set[str] = set()
     for m in markets:
         if m.game_date:

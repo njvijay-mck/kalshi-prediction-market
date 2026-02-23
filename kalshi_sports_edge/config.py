@@ -11,24 +11,170 @@ SPORTS_CATEGORY = "Sports"
 # Known Kalshi series tickers for individual US sports game markets.
 # These are fetched via /events?series_ticker=X rather than the flat /markets
 # endpoint (which returns KXMVESPORTSMULTIGAMEEXTENDED parlay markets first).
-US_SPORTS_GAME_SERIES: list[str] = [
+
+# --- BASKETBALL ---
+BASKETBALL_SERIES: list[str] = [
     "KXNBAGAME",     # NBA  — Professional Basketball Game
-    "KXNFLGAME",     # NFL  — Professional Football Game
-    "KXMLBGAME",     # MLB  — Professional Baseball Game
-    "KXNHLGAME",     # NHL  — NHL Game
-    "KXNCAAFGAME",   # NCAAF — College Football Game
     "KXNCAAMBGAME",  # NCAAB — Men's College Basketball Game
     "KXNCAAWBGAME",  # NCAAW — Women's College Basketball Game
     "KXWNBAGAME",    # WNBA  — Professional Women's Basketball Game
     "KXNBAGAMES",    # NBA games (alt series)
+    "KXUNRIVALEDGAME",  # Unrivaled Basketball Game
+    "KXVTBGAME",     # VTB United League Game
+    "KXELHGAME",     # ELH (Czech) Game
+    "KXGBLGAME",     # GBL (Greek) Game
+    "KXACBGAME",     # Liga ACB (Spain) Game
+    "KXEUROLEAGUEGAME",  # Euroleague Game
+    "KXLNBELITEGAME",    # LNB Elite (France) Game
+    "KXBSLGAME",     # Turkey BSL Game
+    "KXJBLEAGUEGAME",    # Japan B League Game
+    "KXKBLGAME",     # Korea KBL Game
+    "KXCBAGAME",     # Chinese Basketball Association Game
+    "KXNBLGAME",     # NBL (Australia) Game
+    "KXABAGAME",     # ABA League Game
+    "KXBBSERIEAGAME",    # Italy Serie A Basketball Game
 ]
+
+# --- FOOTBALL ---
+FOOTBALL_SERIES: list[str] = [
+    "KXNFLGAME",     # NFL  — Professional Football Game
+    "KXNCAAFGAME",   # NCAAF — College Football Game
+    "KXNCAAFD3GAME", # D3 College Football Game
+]
+
+# --- BASEBALL ---
+BASEBALL_SERIES: list[str] = [
+    "KXMLBGAME",     # MLB  — Professional Baseball Game
+    "KXNCAAMBBGAME", # College Baseball Game
+]
+
+# --- SOCCER / FOOTBALL ---
+SOCCER_SERIES: list[str] = [
+    "KXMLSGAME",         # Major League Soccer Game
+    "KXLALIGAGAME",      # La Liga Game (Spain)
+    "KXEPLGAME",         # English Premier League Game
+    "KXBUNDESLIGAGAME",  # Bundesliga Game (Germany)
+    "KXUCLGAME",         # UEFA Champions League Game
+    "KXUELGAME",         # UEFA Europa League Game
+    "KXUECLGAME",        # UEFA Conference League Game
+    "KXJLEAGUEGAME",     # Japan J League Game
+    "KXALEAGUEGAME",     # Australian A League Game
+    "KXLIGAMXGAME",      # Liga MX Game (Mexico)
+    "KXLIGUE1GAME",      # Ligue 1 Game (France)
+    "KXARGPREMDIVGAME",  # Argentina Primera Division Game
+    "KXBRASILEIROGAME",  # Brasileiro Serie A Game (Brazil)
+    "KXSCOTTISHPREMGAME",# Scottish Premiership Game
+    "KXEREDIVISIEGAME",  # Eredivisie Game (Netherlands)
+    "KXBELGIANPLGAME",   # Belgian Pro League Game
+    "KXSWISSLEAGUEGAME", # Swiss Super League Game
+    "KXEKSTRAKLASAGAME", # Polish Ekstraklasa Game
+    "KXHNLGAME",         # Croatia HNL Game
+    "KXLIIGAGAME",       # Liiga Game (Finland)
+    "KXSHLGAME",         # SHL Game (Sweden)
+    "KXDANISHSUPERLIGAGAME", # Danish Superliga Game
+    "KXSAUDIPLSPREAD",   # Saudi Pro League Game
+    "KXKNVBCUPGAME",     # KNVB Cup Game (Netherlands)
+    "KXDFBPOKALGAME",    # DFB Pokal Game (Germany)
+    "KXTACAPORTGAME",    # Taca de Portugal Game
+    "KXFACUPGAME",       # FA Cup Game (England)
+    "KXCOPADELREYGAME",  # Copa Del Rey Game (Spain)
+    "KXCOPPAITALIAGAME", # Coppa Italia Game
+    "KXITASUPERCUPGAME", # Italy Super Cup Game
+    "KXEFLCHAMPIONSHIPGAME", # EFL Championship Game
+    "KXLALIGA2GAME",     # LaLiga 2 Game
+    "KXBUNDESLIGA2GAME", # Bundesliga 2 Game
+    "KXINTLFRIENDLYGAME",# International Friendly Game
+    "KXWCGAME",          # World Cup Game
+    "KXAFCONGAME",       # AFCON Game
+    "KXASIACUPGAME",     # Asia Cup Game
+    "KXCONCACAFGAME",    # CONCACAF Game
+    "KXCOPAAMERICAGAME", # Copa America Game
+]
+
+# --- TENNIS ---
+TENNIS_SERIES: list[str] = [
+    "KXATPMATCH",         # ATP Tennis Match
+    "KXWTAMATCH",         # WTA Tennis Match
+    "KXATPCHALLENGERMATCH", # Challenger ATP
+    "KXWTACHALLENGERMATCH", # Challenger WTA
+    "KXATPDOUBLES",       # ATP Doubles Tennis Match
+    "KXWTADOUBLES",       # WTA Doubles Tennis Match
+    "KXFOMENSINGLES",     # French Open men's singles
+    "KXFOWOMENSINGLES",   # French Open women's singles
+    "KXUSOMENSINGLES",    # US Open men's singles
+    "KXUSOWOMENSINGLES",  # US Open women's singles
+    "KXAOMENSINGLES",     # Australian Open men's singles
+    "KXWOWOMENSINGLES",   # Wimbledon women's singles
+    "KXDDFMENSINGLES",    # Dubai Duty Free Men's Singles
+    "KXWTASERENA",        # Serena Williams WTA
+    "KXWTAIWO",           # Indian Wells Open (WTA)
+    "KXATPIWO",           # Indian Wells Open (ATP)
+    "KXATPMIA",           # ATP Miami
+    "KXWTAMIA",           # WTA Miami
+    "KXATPMAD",           # ATP Madrid
+    "KXWTAMAD",           # WTA Madrid
+    "KXATPIT",            # ATP Italian Open
+    "KXWTAIT",            # WTA Italian Open
+    "KXATPMC",            # ATP Monte Carlo
+    "KXATPMCO",           # Movistar Chile Open
+    "KXATPWDDF",          # ATP Dubai Duty Free
+    "KXWTADDF",           # WTA Dubai Duty Free
+    "KXWTAATX",           # WTA Tour ATX Open
+    "KXWTAMOA",           # WTA Tour Merida Open Akron
+    "KXATPAMT",           # ATP Tour Abierto Mexican
+    "KXATPGRANDSLAM",     # ATP Grand Slam
+    "KXWTAGRANDSLAM",     # WTA Grand Slam
+    "KXTENNISGRANDSLAM",  # Tennis Grand Slam
+    "KXUSOPEN",           # US Open (generic)
+    "KXATPFINALS",        # ATP Finals Winner
+    "KXWTAFINALS",        # WTA Finals Champion
+    "KXATPANYSET",        # ATP Any Set Winner
+    "KXATPTOTALSETS",     # ATP Total Sets
+    "KXTABLETENNIS",      # Table Tennis Match
+]
+
+# --- HOCKEY ---
+HOCKEY_SERIES: list[str] = [
+    "KXNHLGAME",      # NHL Game
+    "KXNCAAHOCKEYGAME", # College Hockey Game
+    "KXIIHFGAME",     # IIHF Game
+    "KXKHLGAME",      # KHL Game
+    "KXAH LGAME",     # AHL Game
+]
+
+# Combined list for backward compatibility
+US_SPORTS_GAME_SERIES: list[str] = (
+    BASKETBALL_SERIES
+    + FOOTBALL_SERIES
+    + BASEBALL_SERIES
+    + SOCCER_SERIES
+    + TENNIS_SERIES
+    + HOCKEY_SERIES
+)
 
 # Ticker prefixes that identify individual sports game markets
 # (used in is_sports_market() as a fast prefix check on event_ticker)
-SPORTS_TICKER_PREFIXES: tuple[str, ...] = (
-    "KXNBAGAME", "KXNFLGAME", "KXMLBGAME", "KXNHLGAME",
-    "KXNCAAFGAME", "KXNCAAMBGAME", "KXNCAAWBGAME", "KXWNBAGAME",
+SPORTS_TICKER_PREFIXES: tuple[str, ...] = tuple(
+    BASKETBALL_SERIES
+    + FOOTBALL_SERIES
+    + BASEBALL_SERIES
+    + SOCCER_SERIES
+    + TENNIS_SERIES
+    + HOCKEY_SERIES
 )
+
+# Sport category mapping for filtering
+SPORT_CATEGORIES: dict[str, list[str]] = {
+    "basketball": BASKETBALL_SERIES,
+    "football": FOOTBALL_SERIES,
+    "baseball": BASEBALL_SERIES,
+    "soccer": SOCCER_SERIES,
+    "tennis": TENNIS_SERIES,
+    "hockey": HOCKEY_SERIES,
+}
+
+# All supported sports (for CLI help text)
+SUPPORTED_SPORTS: list[str] = list(SPORT_CATEGORIES.keys())
 
 # --- Odds engine ---
 WIDE_SPREAD_THRESHOLD = 10  # cents; spreads above this trigger a terminal warning

@@ -55,7 +55,7 @@ def run(args: CLIArgs) -> int:
             terminal.console.print(
                 f"[yellow]No sports markets found with game date {args.date}.[/yellow]"
             )
-            hints = market_fetcher.get_available_game_dates()
+            hints = market_fetcher.get_available_game_dates(sports=args.sports)
             if hints:
                 terminal.console.print(
                     f"[dim]Available game dates: {', '.join(hints)}[/dim]"
@@ -196,25 +196,61 @@ def _run_deep_research(
     web_ctx: str | None,
     metrics: RunMetrics,
 ) -> int:
+    """Run enhanced deep research with multi-source web search and comprehensive metrics."""
     terminal.console.print(
-        f"\n[bold cyan]Running Deep Research Pipeline "
+        f"\n[bold cyan]Running Enhanced Deep Research Pipeline "
         f"({len(markets)} market{'s' if len(markets) != 1 else ''})...[/bold cyan]"
     )
+    terminal.console.print(
+        "[dim]Stages: [1] Multi-source web search → [2] Probability estimation → "
+        "[3] Edge/EV/ROI calculation → [4] Classification → [5] Consolidation[/dim]"
+    )
+    
     try:
+        # Run enhanced deep research with progress updates
+        def progress(msg: str) -> None:
+            terminal.console.print(f"[dim]{msg}[/dim]")
+        
         report = deep_research.run_deep_research(
             markets=markets,
             odds_tables=odds_tables,
             client=client,
             model=args.model,
             web_context=web_ctx,
+            progress=progress,
         )
         report.metrics = metrics
-        metrics.llm_calls_made = 4
-
-        terminal.print_consolidated_report(report, verbose=args.verbose)
+        
+        # Estimate LLM calls: 1 per market for probability estimation
+        metrics.llm_calls_made = len(markets)
+        metrics.web_searches_made = len(set(m.event_ticker for m in markets)) * 5  # 5 sources per game
+        
+        # Get analyses for enhanced output
+        analyses = getattr(report, '_analyses', [])
+        
+        # Use enhanced output format
+        if analyses:
+            terminal.print_enhanced_consolidated_report(
+                analyses=analyses,
+                generated_at=report.generated_at,
+                model=args.model,
+                verbose=args.verbose,
+            )
+        else:
+            # Fallback to old format
+            terminal.print_consolidated_report(report, verbose=args.verbose)
 
         if args.pdf:
-            path = pdf_report.write_consolidated_report(report)
+            # Use enhanced PDF format if analyses available
+            analyses = getattr(report, '_analyses', [])
+            if analyses:
+                path = pdf_report.write_enhanced_consolidated_report(
+                    analyses=analyses,
+                    generated_at=report.generated_at,
+                    model=args.model,
+                )
+            else:
+                path = pdf_report.write_consolidated_report(report)
             terminal.console.print(f"\n[green]PDF saved → {path}[/green]")
 
         return 0
@@ -258,7 +294,8 @@ def _resolve_markets(args: CLIArgs, metrics: RunMetrics) -> list[MarketData]:
 
     if args.search:
         return market_fetcher.fetch_by_keyword(
-            args.search, args.limit, args.min_volume, args.min_open_interest
+            args.search, args.limit, args.min_volume, args.min_open_interest,
+            sports=args.sports,
         )
 
     if args.date:
@@ -267,9 +304,10 @@ def _resolve_markets(args: CLIArgs, metrics: RunMetrics) -> list[MarketData]:
             "not market settlement date. This may take a moment.[/dim]"
         )
         return market_fetcher.fetch_by_date(
-            args.date, args.limit, args.min_volume, args.min_open_interest
+            args.date, args.limit, args.min_volume, args.min_open_interest,
+            sports=args.sports,
         )
 
     # --pick N or default (pick was set to limit in _validate_args)
     n = args.pick or args.limit
-    return market_fetcher.fetch_top_n(n, args.min_volume, args.min_open_interest)
+    return market_fetcher.fetch_top_n(n, args.min_volume, args.min_open_interest, sports=args.sports)

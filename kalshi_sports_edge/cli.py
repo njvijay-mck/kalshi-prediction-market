@@ -25,6 +25,7 @@ from kalshi_sports_edge.config import (
     EDGE_THRESHOLD_DEFAULT,
     PROVIDER_DEFAULT_MODELS,
     PROVIDER_ENV_KEYS,
+    SUPPORTED_SPORTS,
 )
 
 
@@ -41,6 +42,7 @@ class CLIArgs:
     min_volume: int
     min_open_interest: int
     exclude_started: bool  # Filter out games that have already started
+    sports: list[str] | None  # Filter by specific sports (e.g., ['soccer', 'tennis'])
 
     # LLM
     llm: bool
@@ -115,6 +117,11 @@ examples:
         default=True, dest="exclude_started",
         help="Exclude games that have already started (default: True)",
     )
+    parser.add_argument(
+        "--sports", metavar="SPORT",
+        nargs="+", choices=SUPPORTED_SPORTS,
+        help=f"Filter by specific sports. Choices: {', '.join(SUPPORTED_SPORTS)}",
+    )
 
     # LLM
     parser.add_argument(
@@ -173,6 +180,7 @@ examples:
         min_volume=ns.min_volume,
         min_open_interest=ns.min_open_interest,
         exclude_started=ns.exclude_started,
+        sports=ns.sports,
         llm=use_llm,
         provider=ns.provider,
         model=ns.model or PROVIDER_DEFAULT_MODELS[ns.provider],
