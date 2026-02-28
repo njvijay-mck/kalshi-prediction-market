@@ -244,18 +244,25 @@ def _run_deep_research(
             # Fallback to old format
             terminal.print_consolidated_report(report, verbose=args.verbose)
 
+        analyses_out = getattr(report, '_analyses', [])
+        if args.html and analyses_out:
+            path = html_report.write_enhanced_consolidated_report(
+                analyses=analyses_out,
+                generated_at=report.generated_at,
+                model=args.model,
+            )
+            terminal.console.print(f"\n[green]HTML report saved → {path}[/green]")
         if args.pdf:
-            # Consolidated report → HTML (single-page, self-contained)
-            analyses_out = getattr(report, '_analyses', [])
+            # Consolidated PDF report (legacy format)
             if analyses_out:
-                path = html_report.write_enhanced_consolidated_report(
+                path = pdf_report.write_enhanced_consolidated_report(
                     analyses=analyses_out,
                     generated_at=report.generated_at,
                     model=args.model,
                 )
             else:
                 path = pdf_report.write_consolidated_report(report)
-            terminal.console.print(f"\n[green]Report saved → {path}[/green]")
+            terminal.console.print(f"\n[green]PDF saved → {path}[/green]")
 
         return 0
 

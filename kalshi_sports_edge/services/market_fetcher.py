@@ -323,6 +323,12 @@ _MONTH_MAP: dict[str, int] = {
 
 _GAME_DATE_RE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})")
 
+# Kalshi markets expire roughly 3 hours after game tip-off.
+# Subtracting this offset from expected_expiration_time gives the estimated
+# game start time, whose LOCAL (ET) date is the true game date.
+_GAME_START_OFFSET = datetime.timedelta(hours=3)
+_ET = datetime.timezone(datetime.timedelta(hours=-5))
+
 
 def _fetch_event_title(event_ticker: str) -> str:
     """Fetch the event title for a given event_ticker (e.g. 'Philadelphia at Minnesota').
@@ -361,7 +367,9 @@ def _derive_opponent(event_title: str, yes_team: str) -> str | None:
 def _parse_game_date(event_ticker: str) -> datetime.date | None:
     """Extract game date from event_ticker like 'KXNBAGAME-26FEB22CLEOKC'.
 
-    Kalshi encodes the game date as YYMONDD in the second dash-separated segment.
+    Kalshi encodes YYMONDD in the second dash-separated segment.
+    NOTE: this encodes the market *expiration* date (game end), not the game
+    start date. Use _game_date_from_expiration() when expiration time is available.
     Returns None if the ticker doesn't match the expected pattern.
     """
     parts = event_ticker.split("-")
@@ -380,6 +388,26 @@ def _parse_game_date(event_ticker: str) -> datetime.date | None:
         return None
 
 
+def _game_date_from_expiration(iso_str: str | None) -> datetime.date | None:
+    """Derive the game START date from expected_expiration_time.
+
+    Kalshi markets expire ~3 h after tip-off. Subtracting _GAME_START_OFFSET
+    and converting to ET gives the local date on which the game actually starts.
+
+    Example: 10 PM ET Feb 28 tip-off → expiration ~1 AM ET Mar 1
+             → 1 AM Mar 1 − 3 h = 10 PM Feb 28 ET → game_date = Feb 28 ✓
+    Returns None if iso_str is absent or unparseable.
+    """
+    if not iso_str:
+        return None
+    try:
+        dt_utc = datetime.datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        start_et = (dt_utc - _GAME_START_OFFSET).astimezone(_ET)
+        return start_et.date()
+    except Exception:
+        return None
+
+
 def _parse_market_dict(m: dict, event_title: str = "") -> MarketData:
     """Convert a raw API market dict to MarketData.
 
@@ -390,8 +418,15 @@ def _parse_market_dict(m: dict, event_title: str = "") -> MarketData:
     """
     tags_raw = m.get("tags") or []
     event_ticker = m.get("event_ticker", "")
+    expected_expiration_time = m.get("expected_expiration_time")
     yes_team = m.get("yes_sub_title") or None
     no_team = _derive_opponent(event_title, yes_team) if yes_team and event_title else None
+    # Prefer expiration-derived date (accurate game start date in ET) over
+    # ticker-encoded date (which reflects market expiration, not game start).
+    game_date = (
+        _game_date_from_expiration(expected_expiration_time)
+        or _parse_game_date(event_ticker)
+    )
     return MarketData(
         ticker=m.get("ticker", ""),
         title=m.get("title", ""),
@@ -405,8 +440,8 @@ def _parse_market_dict(m: dict, event_title: str = "") -> MarketData:
         volume=int(m.get("volume") or m.get("volume_24h") or 0),
         open_interest=int(m.get("open_interest") or 0),
         close_time=m.get("close_time"),
-        game_date=_parse_game_date(event_ticker),
-        expected_expiration_time=m.get("expected_expiration_time"),
+        game_date=game_date,
+        expected_expiration_time=expected_expiration_time,
         yes_team=yes_team,
         no_team=no_team,
     )

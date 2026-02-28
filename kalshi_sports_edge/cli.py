@@ -55,7 +55,8 @@ class CLIArgs:
 
     # Output
     edge_threshold: float
-    pdf: bool
+    pdf: bool   # Save per-market PDF reports
+    html: bool  # Save consolidated HTML report
     verbose: bool
     summary: bool  # Quick summary view sorted by volume
 
@@ -155,7 +156,11 @@ examples:
     )
     parser.add_argument(
         "--pdf", action="store_true",
-        help="Save PDF report to reports/YYYY-MM-DD/ directory",
+        help="Save per-market PDF report to reports/YYYY-MM-DD/ directory",
+    )
+    parser.add_argument(
+        "--html", action="store_true",
+        help="Save consolidated single-page HTML report to reports/YYYY-MM-DD/ directory",
     )
     parser.add_argument(
         "--verbose", action="store_true",
@@ -188,6 +193,7 @@ examples:
         web_search=ns.web_search,
         edge_threshold=ns.edge_threshold,
         pdf=ns.pdf,
+        html=ns.html,
         verbose=ns.verbose,
         summary=ns.summary,
     )
