@@ -13,7 +13,7 @@ import datetime
 
 from kalshi_sports_edge.cli import CLIArgs
 from kalshi_sports_edge.models import MarketData, OddsTable, ReportData, RunMetrics
-from kalshi_sports_edge.output import pdf_report, terminal
+from kalshi_sports_edge.output import html_report, pdf_report, terminal
 from kalshi_sports_edge.services import (
     deep_research,
     llm_pipeline,
@@ -69,6 +69,10 @@ def run(args: CLIArgs) -> int:
         return 0
 
     metrics.markets_fetched = len(markets)
+
+    # Sort by volume desc, cap to --pick N (or --limit) before LLM/deep-research
+    n_cap = args.pick or args.limit
+    markets = sorted(markets, key=lambda m: m.volume, reverse=True)[:n_cap]
 
     # --- Filter out games that have already started ---
     if args.exclude_started:
@@ -241,17 +245,17 @@ def _run_deep_research(
             terminal.print_consolidated_report(report, verbose=args.verbose)
 
         if args.pdf:
-            # Use enhanced PDF format if analyses available
-            analyses = getattr(report, '_analyses', [])
-            if analyses:
-                path = pdf_report.write_enhanced_consolidated_report(
-                    analyses=analyses,
+            # Consolidated report → HTML (single-page, self-contained)
+            analyses_out = getattr(report, '_analyses', [])
+            if analyses_out:
+                path = html_report.write_enhanced_consolidated_report(
+                    analyses=analyses_out,
                     generated_at=report.generated_at,
                     model=args.model,
                 )
             else:
                 path = pdf_report.write_consolidated_report(report)
-            terminal.console.print(f"\n[green]PDF saved → {path}[/green]")
+            terminal.console.print(f"\n[green]Report saved → {path}[/green]")
 
         return 0
 
