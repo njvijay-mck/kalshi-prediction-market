@@ -96,14 +96,20 @@ def _sign_headers(method: str, path: str) -> dict[str, str]:
     }
 
 
-def raw_get(path: str, **params: Any) -> dict:
+def raw_get(path: str, timeout: int = 30, _retries: int = 3, **params: Any) -> dict:
     """GET request that returns a raw dict (bypasses SDK pydantic validation).
 
     Uses auth headers when credentials are configured; otherwise makes a public request.
     Use this when the SDK model raises validation errors due to null fields in demo env.
     path: path relative to base URL, e.g. "/markets" or "/portfolio/balance"
+    timeout: per-request read timeout in seconds (default 30)
+    _retries: number of retry attempts on timeout/connection errors (default 3)
     """
+    import time as _time
+
     import requests as req
+    from requests.exceptions import ConnectionError as ReqConnectionError
+    from requests.exceptions import Timeout
 
     url = _base_url() + path
     full_path = "/trade-api/v2" + path
@@ -115,9 +121,20 @@ def raw_get(path: str, **params: Any) -> dict:
     else:
         headers = {"Content-Type": "application/json"}
 
-    r = req.get(url, headers=headers, params=filtered, timeout=15)
-    r.raise_for_status()
-    return r.json()
+    last_exc: Exception | None = None
+    for attempt in range(_retries):
+        try:
+            r = req.get(url, headers=headers, params=filtered, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except (Timeout, ReqConnectionError) as exc:
+            last_exc = exc
+            if attempt < _retries - 1:
+                _time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
+                # Re-sign headers on retry (timestamp must be fresh)
+                if os.getenv("KALSHI_API_KEY_ID") and os.getenv("KALSHI_PRIVATE_KEY_PATH"):
+                    headers = _sign_headers("GET", full_path)
+    raise last_exc  # type: ignore[misc]
 
 
 def raw_post(path: str, body: dict) -> dict:
@@ -127,7 +144,7 @@ def raw_post(path: str, body: dict) -> dict:
     url = _base_url() + path
     full_path = "/trade-api/v2" + path
     headers = _sign_headers("POST", full_path)
-    r = req.post(url, headers=headers, json=body, timeout=15)
+    r = req.post(url, headers=headers, json=body, timeout=30)
     r.raise_for_status()
     return r.json() if r.content else {}
 
@@ -139,6 +156,6 @@ def raw_delete(path: str, body: dict | None = None) -> dict:
     url = _base_url() + path
     full_path = "/trade-api/v2" + path
     headers = _sign_headers("DELETE", full_path)
-    r = req.delete(url, headers=headers, json=body, timeout=15)
+    r = req.delete(url, headers=headers, json=body, timeout=30)
     r.raise_for_status()
     return r.json() if r.content else {}
