@@ -10,7 +10,6 @@ Stages:
 
 from __future__ import annotations
 
-import concurrent.futures
 import datetime
 from typing import Protocol
 
@@ -25,6 +24,7 @@ from kalshi_sports_edge.services.llm_pipeline import (
     AuthenticationError,
     OpenAIClientWrapper,
 )
+from kalshi_sports_edge.services.odds_engine import calc_ev
 from kalshi_sports_edge.services.web_search import (
     MultiSourceContext,
     search_game_context,
@@ -166,14 +166,13 @@ def _analyze_all_markets(
         yes_edge = llm_yes_prob - market_yes
         no_edge = llm_no_prob - market_no
         
-        yes_price = odds_table.yes_row.price_cents / 100.0
-        no_price = odds_table.no_row.price_cents / 100.0
-        
-        yes_ev = yes_edge
-        no_ev = no_edge
-        
-        yes_roi = (yes_ev / yes_price * 100) if yes_price > 0 else 0
-        no_roi = (no_ev / no_price * 100) if no_price > 0 else 0
+        # EV = edge / implied_prob (expected return per dollar wagered).
+        # ROI = EV * 100 (as a percentage of the stake).
+        yes_ev = calc_ev(yes_edge, odds_table.yes_row.price_cents)
+        no_ev = calc_ev(no_edge, odds_table.no_row.price_cents)
+
+        yes_roi = yes_ev * 100
+        no_roi = no_ev * 100
         
         # Determine best side
         if yes_edge >= no_edge:
@@ -333,7 +332,6 @@ def _build_consolidation_output(analyses: list[MarketAnalysis]) -> str:
     )
     
     for i, analysis in enumerate(edge_sorted[:15], 1):
-        side = analysis.best_side
         edge_pct = analysis.best_edge * 100
         ev_c = analysis.best_ev
         rec = "BUY" if analysis.best_edge >= 0.05 else "SELL"

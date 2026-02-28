@@ -64,10 +64,14 @@ _WARN = ParagraphStyle(
     spaceAfter=3
 )
 
-# Table column widths (points)
+# Table column widths (points). Usable page width ≈ 504 pts (7" with 0.75" margins).
 _COL_WIDTHS_ODDS = [60, 55, 65, 60, 65, 65]
-_COL_WIDTHS_SUMMARY = [90, 50, 50, 50, 50, 40, 40, 55]
-_COL_WIDTHS_TOP_PICKS = [30, 140, 50, 70, 50, 50]
+# Market|GameVol|Time|YES/NO|Edge|EV|Sentiment|ROI|Rec|Conf|Why  → 469 pts
+_COL_WIDTHS_SUMMARY = [60, 44, 56, 38, 42, 40, 48, 34, 32, 32, 43]
+# Rank|Market|Edge|GameVol|Time|YES/NO|Rec|Conf  → 398 pts
+_COL_WIDTHS_TOP_PICKS = [25, 100, 44, 50, 58, 40, 38, 43]
+# Market|GameVol|Time|YES/NO|Edge|EV  → 344 pts
+_COL_WIDTHS_AVOID = [100, 50, 62, 44, 44, 44]
 _COL_WIDTHS_MINI = [90, 55, 55, 50, 45, 45]
 
 # Header background color
@@ -305,24 +309,70 @@ def _build_odds_table_element(t: OddsTable) -> Table:
     return tbl
 
 
+_EST_OFFSET = datetime.timezone(datetime.timedelta(hours=-5))
+
+
+def _fmt_game_time(iso_str: str | None) -> str:
+    """Format estimated game start time (expiration − 3 h) as '~6:30 PM ET'."""
+    if not iso_str:
+        return "—"
+    try:
+        dt_utc = datetime.datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        start_et = (dt_utc - datetime.timedelta(hours=3)).astimezone(_EST_OFFSET)
+        hour = start_et.hour % 12 or 12
+        am_pm = "AM" if start_et.hour < 12 else "PM"
+        return f"~{hour}:{start_et.minute:02d} {am_pm} ET"
+    except Exception:
+        return "—"
+
+
+def _fmt_vol(n: int) -> str:
+    """Format integer contract count as compact dollar string."""
+    if n >= 1_000_000:
+        return f"${n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"${n / 1_000:.1f}K"
+    return f"${n}"
+
+
+def _game_volumes(analyses: list[MarketAnalysis]) -> dict[str, int]:
+    """Map event_ticker → total volume (sum across both sides of a game)."""
+    totals: dict[str, int] = {}
+    for a in analyses:
+        totals[a.market.event_ticker] = totals.get(a.market.event_ticker, 0) + a.market.volume
+    return totals
+
+
+def _by_volume_edge(a: MarketAnalysis) -> tuple:
+    """Sort key: volume descending, then |edge| descending."""
+    return (-a.market.volume, -abs(a.best_edge))
+
+
 def _build_summary_table(analyses: list[MarketAnalysis]) -> Table:
     """Build Section 2: Summary Table."""
-    header = ["Market", "Best Edge", "Best EV", "Sentiment", "ROI", "Rec", "Conf", "Why"]
+    game_vols = _game_volumes(analyses)
+    header = ["Market", "Game Vol", "Time", "YES/NO¢", "Best Edge", "Best EV",
+              "Sentiment", "ROI", "Rec", "Conf", "Why"]
     rows = [header]
-    
-    for analysis in analyses[:30]:  # Top 30
-        # Recommendation
+
+    for analysis in sorted(analyses, key=_by_volume_edge)[:30]:  # Top 30 by volume
         if analysis.best_edge >= 0.05:
             rec = "BUY"
         elif analysis.best_edge <= -0.05:
             rec = "SELL"
         else:
             rec = "HOLD"
-        
-        market_name = analysis.market.title[:25]
-        
+
+        game_vol = _fmt_vol(game_vols.get(analysis.market.event_ticker, analysis.market.volume))
+        time_str = _fmt_game_time(analysis.market.expected_expiration_time)
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
         rows.append([
-            market_name,
+            analysis.market.title[:22],
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
             f"{analysis.best_edge:+.2f}",
             f"{analysis.best_ev:+.3f}",
             analysis.sentiment,
@@ -331,8 +381,141 @@ def _build_summary_table(analyses: list[MarketAnalysis]) -> Table:
             analysis.confidence,
             analysis.reason[:8],
         ])
-    
+
     tbl = Table(rows, colWidths=_COL_WIDTHS_SUMMARY)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_ROW_A, _ROW_B]),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TEXTCOLOR", (8, 1), (8, -1), _get_rec_color),
+    ]))
+    return tbl
+
+
+def _build_top_picks_by_edge_table(analyses: list[MarketAnalysis]) -> Table:
+    """Build Section 3: Top Picks by Edge."""
+    game_vols = _game_volumes(analyses)
+    header = ["Rank", "Market", "Edge", "Game Vol", "Time", "YES/NO¢", "Rec", "Conf"]
+    rows = [header]
+
+    edge_picks = [a for a in analyses if abs(a.best_edge) >= 0.05]
+    edge_picks.sort(key=lambda x: abs(x.best_edge), reverse=True)
+
+    for i, analysis in enumerate(edge_picks[:15], 1):
+        rec = "BUY" if analysis.best_edge >= 0.05 else "SELL"
+        game_vol = _fmt_vol(game_vols.get(analysis.market.event_ticker, analysis.market.volume))
+        time_str = _fmt_game_time(analysis.market.expected_expiration_time)
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
+        rows.append([
+            f"#{i}",
+            analysis.market.title[:26],
+            f"{analysis.best_edge*100:+.1f}%",
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
+            rec,
+            analysis.confidence,
+        ])
+
+    tbl = Table(rows, colWidths=_COL_WIDTHS_TOP_PICKS)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_ROW_A, _ROW_B]),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    return tbl
+
+
+def _build_top_picks_by_ev_table(analyses: list[MarketAnalysis]) -> Table:
+    """Build Section 4: Top Picks by EV."""
+    game_vols = _game_volumes(analyses)
+    header = ["Rank", "Market", "EV/c", "ROI", "Game Vol", "Time", "YES/NO¢", "Rec"]
+    rows = [header]
+
+    ev_picks = [a for a in analyses if a.best_ev > 0]
+    ev_picks.sort(key=lambda x: x.best_ev, reverse=True)
+
+    for i, analysis in enumerate(ev_picks[:15], 1):
+        game_vol = _fmt_vol(game_vols.get(analysis.market.event_ticker, analysis.market.volume))
+        time_str = _fmt_game_time(analysis.market.expected_expiration_time)
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
+        rows.append([
+            f"#{i}",
+            analysis.market.title[:26],
+            f"{analysis.best_ev:+.3f}",
+            f"{analysis.best_roi:+.1f}%",
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
+            "BUY",
+        ])
+
+    tbl = Table(rows, colWidths=_COL_WIDTHS_TOP_PICKS)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_ROW_A, _ROW_B]),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    return tbl
+
+
+def _build_markets_to_avoid(analyses: list[MarketAnalysis]) -> list:
+    """Build Section 5: Markets to Avoid."""
+    game_vols = _game_volumes(analyses)
+    avoid = sorted(
+        [a for a in analyses if abs(a.best_edge) < 0.05 or a.best_ev <= 0],
+        key=_by_volume_edge,
+    )
+
+    if not avoid:
+        return [Paragraph("None — all markets show positive edge.", _BODY)]
+
+    header = ["Market", "Game Vol", "Time", "YES/NO¢", "Edge", "EV/c"]
+    rows = [header]
+
+    for analysis in avoid[:10]:
+        game_vol = _fmt_vol(game_vols.get(analysis.market.event_ticker, analysis.market.volume))
+        time_str = _fmt_game_time(analysis.market.expected_expiration_time)
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
+        rows.append([
+            analysis.market.title[:28],
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
+            f"{analysis.best_edge*100:+.1f}%",
+            f"{analysis.best_ev:+.3f}",
+        ])
+
+    tbl = Table(rows, colWidths=_COL_WIDTHS_AVOID)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -344,115 +527,26 @@ def _build_summary_table(analyses: list[MarketAnalysis]) -> Table:
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        # Color coding for recommendations
-        ("TEXTCOLOR", (5, 1), (5, -1), _get_rec_color),
     ]))
-    return tbl
-
-
-def _build_top_picks_by_edge_table(analyses: list[MarketAnalysis]) -> Table:
-    """Build Section 3: Top Picks by Edge."""
-    header = ["Rank", "Market", "Edge", "Volume", "Rec", "Conf"]
-    rows = [header]
-    
-    # Filter for |edge| >= 5% and sort
-    edge_picks = [a for a in analyses if abs(a.best_edge) >= 0.05]
-    edge_picks.sort(key=lambda x: abs(x.best_edge), reverse=True)
-    
-    for i, analysis in enumerate(edge_picks[:15], 1):
-        rec = "BUY" if analysis.best_edge >= 0.05 else "SELL"
-        vol_str = f"${analysis.market.volume/1000:.1f}K" if analysis.market.volume >= 1000 else f"${analysis.market.volume}"
-        
-        rows.append([
-            f"#{i}",
-            analysis.market.title[:30],
-            f"{analysis.best_edge*100:+.1f}%",
-            vol_str,
-            rec,
-            analysis.confidence,
-        ])
-    
-    tbl = Table(rows, colWidths=_COL_WIDTHS_TOP_PICKS)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_ROW_A, _ROW_B]),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("ALIGN", (2, 0), (2, -1), "RIGHT"),
-        ("ALIGN", (4, 0), (4, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    return tbl
-
-
-def _build_top_picks_by_ev_table(analyses: list[MarketAnalysis]) -> Table:
-    """Build Section 4: Top Picks by EV."""
-    header = ["Rank", "Market", "EV/c", "ROI", "Rec", "Volume"]
-    rows = [header]
-    
-    # Filter for positive EV and sort
-    ev_picks = [a for a in analyses if a.best_ev > 0]
-    ev_picks.sort(key=lambda x: x.best_ev, reverse=True)
-    
-    for i, analysis in enumerate(ev_picks[:15], 1):
-        vol_str = f"${analysis.market.volume/1000:.1f}K" if analysis.market.volume >= 1000 else f"${analysis.market.volume}"
-        
-        rows.append([
-            f"#{i}",
-            analysis.market.title[:30],
-            f"{analysis.best_ev:+.3f}",
-            f"{analysis.best_roi:+.1f}%",
-            "BUY",
-            vol_str,
-        ])
-    
-    tbl = Table(rows, colWidths=_COL_WIDTHS_TOP_PICKS)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_ROW_A, _ROW_B]),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("ALIGN", (2, 0), (3, -1), "RIGHT"),
-        ("ALIGN", (4, 0), (4, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    return tbl
-
-
-def _build_markets_to_avoid(analyses: list[MarketAnalysis]) -> list:
-    """Build Section 5: Markets to Avoid."""
-    avoid = [a for a in analyses if abs(a.best_edge) < 0.05 or a.best_ev <= 0]
-    
-    if not avoid:
-        return [Paragraph("None — all markets show positive edge.", _BODY)]
-    
-    elements = []
-    for analysis in avoid[:10]:
-        text = (
-            f"• {analysis.market.title[:45]:45s} | "
-            f"Edge: {analysis.best_edge*100:+.1f}% | "
-            f"EV: {analysis.best_ev:+.3f}/c"
-        )
-        elements.append(Paragraph(text, _SMALL))
-    
-    return elements
+    return [tbl]
 
 
 def _build_mini_odds_overview(analyses: list[MarketAnalysis]) -> list:
     """Build Section 6: Mini Odds Overview (per market)."""
+    game_vols = _game_volumes(analyses)
     elements = []
-    
-    for analysis in analyses[:20]:  # Show first 20
+
+    for analysis in sorted(analyses, key=_by_volume_edge)[:20]:  # Top 20 by volume
+        game_vol = _fmt_vol(game_vols.get(analysis.market.event_ticker, analysis.market.volume))
+        time_str = _fmt_game_time(analysis.market.expected_expiration_time)
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
         elements.append(Paragraph(f"<b>{analysis.market.title}</b>", _H3))
-        
+        elements.append(Paragraph(
+            f"Game Vol: {game_vol}  |  {time_str}  |  YES: {yes_p}¢  /  NO: {no_p}¢",
+            _SMALL,
+        ))
+
         header = ["Outcome", "Market %", "LLM %", "Edge", "EV/c", "ROI"]
         rows = [header]
         

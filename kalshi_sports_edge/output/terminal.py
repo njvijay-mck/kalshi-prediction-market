@@ -394,13 +394,32 @@ def print_enhanced_consolidated_report(
             console.print(analysis.web_context[:500] + "...", style="dim")
 
 
+def _by_volume_edge(a: object) -> tuple:
+    """Sort key: volume descending, then |edge| descending."""
+    return (-a.market.volume, -abs(a.best_edge))  # type: ignore[attr-defined]
+
+
+def _game_volumes(analyses: list) -> dict[str, int]:
+    """Map event_ticker → total volume (sum across both sides of a game)."""
+    totals: dict[str, int] = {}
+    for a in analyses:
+        key = a.market.event_ticker  # type: ignore[attr-defined]
+        totals[key] = totals.get(key, 0) + a.market.volume  # type: ignore[attr-defined]
+    return totals
+
+
 def _print_summary_table(analyses: list) -> None:
     """Print Section 2: Summary Table (All Markets)."""
     console.print("\n[bold yellow]SUMMARY TABLE[/bold yellow]")
     console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
-    
+
+    game_vols = _game_volumes(analyses)
+
     tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
-    tbl.add_column("Market", width=28, no_wrap=True)
+    tbl.add_column("Market", width=23, no_wrap=True)
+    tbl.add_column("Game Vol", justify="right", width=9)
+    tbl.add_column("Time", width=12, no_wrap=True)
+    tbl.add_column("YES/NO¢", justify="center", width=9)
     tbl.add_column("Best Edge", justify="right", width=10)
     tbl.add_column("Best EV", justify="right", width=9)
     tbl.add_column("Sentiment", justify="center", width=10)
@@ -408,31 +427,34 @@ def _print_summary_table(analyses: list) -> None:
     tbl.add_column("Rec", justify="center", width=6)
     tbl.add_column("Conf", justify="center", width=6)
     tbl.add_column("Why", width=10)
-    
-    for analysis in analyses[:30]:  # Top 30
-        # Determine recommendation
+
+    for analysis in sorted(analyses, key=_by_volume_edge)[:30]:  # Top 30 by volume
         if analysis.best_edge >= 0.05:
-            rec = "BUY"
-            rec_style = "green"
+            rec, rec_style = "BUY", "green"
         elif analysis.best_edge <= -0.05:
-            rec = "SELL"
-            rec_style = "red"
+            rec, rec_style = "SELL", "red"
         else:
-            rec = "HOLD"
-            rec_style = "dim"
-        
-        # Sentiment color
+            rec, rec_style = "HOLD", "dim"
+
         if analysis.sentiment == "Bullish":
             sent_style = "green"
         elif analysis.sentiment == "Bearish":
             sent_style = "red"
         else:
             sent_style = "dim"
-        
-        market_name = analysis.market.title[:27]
-        
+
+        game_vol = _fmt_dollars(
+            game_vols.get(analysis.market.event_ticker, analysis.market.volume)
+        )
+        time_str = _fmt_game_start(analysis.market.expected_expiration_time) or "—"
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
         tbl.add_row(
-            market_name,
+            analysis.market.title[:22],
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
             f"{analysis.best_edge:+.2f}",
             f"{analysis.best_ev:+.3f}",
             f"[{sent_style}]{analysis.sentiment}[/{sent_style}]",
@@ -441,7 +463,7 @@ def _print_summary_table(analyses: list) -> None:
             analysis.confidence,
             analysis.reason[:9],
         )
-    
+
     console.print(tbl)
 
 
@@ -449,34 +471,43 @@ def _print_top_picks_by_edge(analyses: list) -> None:
     """Print Section 3: Top Picks by Edge."""
     console.print("\n[bold yellow]TOP PICKS BY EDGE[/bold yellow]")
     console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
-    
-    # Filter for |edge| >= 5% and sort
+
+    game_vols = _game_volumes(analyses)
+
     edge_picks = [a for a in analyses if abs(a.best_edge) >= 0.05]
     edge_picks.sort(key=lambda x: abs(x.best_edge), reverse=True)
-    
+
     tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
     tbl.add_column("Rank", justify="right", width=5)
-    tbl.add_column("Market", width=32, no_wrap=True)
+    tbl.add_column("Market", width=27, no_wrap=True)
     tbl.add_column("Edge", justify="right", width=9)
-    tbl.add_column("Volume", justify="right", width=12)
+    tbl.add_column("Game Vol", justify="right", width=9)
+    tbl.add_column("Time", width=12, no_wrap=True)
+    tbl.add_column("YES/NO¢", justify="center", width=9)
     tbl.add_column("Rec", justify="center", width=7)
     tbl.add_column("Conf", justify="center", width=6)
-    
+
     for i, analysis in enumerate(edge_picks[:15], 1):
         rec = "BUY" if analysis.best_edge >= 0.05 else "SELL"
         rec_style = "green" if rec == "BUY" else "red"
-        
-        vol_str = _fmt_dollars(analysis.market.volume)
-        
+        game_vol = _fmt_dollars(
+            game_vols.get(analysis.market.event_ticker, analysis.market.volume)
+        )
+        time_str = _fmt_game_start(analysis.market.expected_expiration_time) or "—"
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
         tbl.add_row(
             f"#{i}",
-            analysis.market.title[:31],
+            analysis.market.title[:26],
             f"{analysis.best_edge*100:+.1f}%",
-            vol_str,
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
             f"[{rec_style}]{rec}[/{rec_style}]",
             analysis.confidence,
         )
-    
+
     console.print(tbl)
 
 
@@ -484,31 +515,41 @@ def _print_top_picks_by_ev(analyses: list) -> None:
     """Print Section 4: Top Picks by EV."""
     console.print("\n[bold yellow]TOP PICKS BY EV[/bold yellow]")
     console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
-    
-    # Filter for positive EV and sort
+
+    game_vols = _game_volumes(analyses)
+
     ev_picks = [a for a in analyses if a.best_ev > 0]
     ev_picks.sort(key=lambda x: x.best_ev, reverse=True)
-    
+
     tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
     tbl.add_column("Rank", justify="right", width=5)
-    tbl.add_column("Market", width=32, no_wrap=True)
+    tbl.add_column("Market", width=27, no_wrap=True)
     tbl.add_column("EV/c", justify="right", width=9)
     tbl.add_column("ROI", justify="right", width=8)
+    tbl.add_column("Game Vol", justify="right", width=9)
+    tbl.add_column("Time", width=12, no_wrap=True)
+    tbl.add_column("YES/NO¢", justify="center", width=9)
     tbl.add_column("Rec", justify="center", width=7)
-    tbl.add_column("Volume", justify="right", width=12)
-    
+
     for i, analysis in enumerate(ev_picks[:15], 1):
-        vol_str = _fmt_dollars(analysis.market.volume)
-        
+        game_vol = _fmt_dollars(
+            game_vols.get(analysis.market.event_ticker, analysis.market.volume)
+        )
+        time_str = _fmt_game_start(analysis.market.expected_expiration_time) or "—"
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
         tbl.add_row(
             f"#{i}",
-            analysis.market.title[:31],
+            analysis.market.title[:26],
             f"{analysis.best_ev:+.3f}",
             f"{analysis.best_roi:+.1f}%",
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
             "[green]BUY[/green]",
-            vol_str,
         )
-    
+
     console.print(tbl)
 
 
@@ -516,29 +557,65 @@ def _print_markets_to_avoid(analyses: list) -> None:
     """Print Section 5: Markets to Avoid."""
     console.print("\n[bold yellow]MARKETS TO AVOID[/bold yellow]")
     console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
-    
-    # No edge or negative EV
-    avoid = [a for a in analyses if abs(a.best_edge) < 0.05 or a.best_ev <= 0]
-    
+
+    game_vols = _game_volumes(analyses)
+
+    avoid = sorted(
+        [a for a in analyses if abs(a.best_edge) < 0.05 or a.best_ev <= 0],
+        key=_by_volume_edge,
+    )
+
     if not avoid:
         console.print("[dim]None — all markets show positive edge.[/dim]")
         return
-    
+
+    tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
+    tbl.add_column("Market", width=27, no_wrap=True)
+    tbl.add_column("Game Vol", justify="right", width=9)
+    tbl.add_column("Time", width=12, no_wrap=True)
+    tbl.add_column("YES/NO¢", justify="center", width=9)
+    tbl.add_column("Edge", justify="right", width=9)
+    tbl.add_column("EV/c", justify="right", width=9)
+
     for analysis in avoid[:10]:
-        console.print(
-            f"  [dim]{analysis.market.title[:50]:50s} | "
-            f"Edge: {analysis.best_edge*100:+.1f}% | "
-            f"EV: {analysis.best_ev:+.3f}/c[/dim]"
+        game_vol = _fmt_dollars(
+            game_vols.get(analysis.market.event_ticker, analysis.market.volume)
         )
+        time_str = _fmt_game_start(analysis.market.expected_expiration_time) or "—"
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
+
+        tbl.add_row(
+            analysis.market.title[:26],
+            game_vol,
+            time_str,
+            f"{yes_p}/{no_p}",
+            f"{analysis.best_edge*100:+.1f}%",
+            f"{analysis.best_ev:+.3f}",
+        )
+
+    console.print(tbl)
 
 
 def _print_mini_odds_overview(analyses: list) -> None:
     """Print Section 6: Mini Odds Overview (Per Market)."""
     console.print("\n[bold yellow]MINI ODDS OVERVIEW[/bold yellow]")
     console.print(f"[bold cyan]{'─' * 78}[/bold cyan]")
-    
-    for analysis in analyses[:20]:  # Show first 20
+
+    game_vols = _game_volumes(analyses)
+
+    for analysis in sorted(analyses, key=_by_volume_edge)[:20]:  # Top 20 by volume
+        game_vol = _fmt_dollars(
+            game_vols.get(analysis.market.event_ticker, analysis.market.volume)
+        )
+        time_str = _fmt_game_start(analysis.market.expected_expiration_time) or "—"
+        yes_p = analysis.odds_table.yes_row.price_cents
+        no_p = analysis.odds_table.no_row.price_cents
         console.print(f"\n[bold]{analysis.market.title}[/bold]")
+        console.print(
+            f"[dim]Game Vol: {game_vol}  |  {time_str}  |  "
+            f"YES: {yes_p}¢  /  NO: {no_p}¢[/dim]"
+        )
         
         tbl = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold magenta")
         tbl.add_column("Outcome", width=25)
